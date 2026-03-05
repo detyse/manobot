@@ -4,15 +4,14 @@ from types import SimpleNamespace
 
 import pytest
 
-import nanobot.channels.matrix as matrix_module
 from nanobot.bus.events import OutboundMessage
 from nanobot.bus.queue import MessageBus
-from nanobot.channels.matrix import (
-    MATRIX_HTML_FORMAT,
-    TYPING_NOTICE_TIMEOUT_MS,
-    MatrixChannel,
-)
 from nanobot.config.schema import MatrixConfig
+
+matrix_module = pytest.importorskip("nanobot.channels.matrix", exc_type=ImportError)
+MATRIX_HTML_FORMAT = matrix_module.MATRIX_HTML_FORMAT
+TYPING_NOTICE_TIMEOUT_MS = matrix_module.TYPING_NOTICE_TIMEOUT_MS
+MatrixChannel = matrix_module.MatrixChannel
 
 _ROOM_SEND_UNSET = object()
 

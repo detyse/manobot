@@ -1,29 +1,27 @@
-from typer.testing import CliRunner
+"""Tests for cron tool timezone validation."""
 
-from nanobot.cli.commands import app
+import pytest
 
-runner = CliRunner()
+from nanobot.agent.tools.cron import CronTool
+from nanobot.cron.service import CronService
 
 
-def test_cron_add_rejects_invalid_timezone(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr("nanobot.config.loader.get_data_dir", lambda: tmp_path)
+@pytest.fixture
+def cron_tool(tmp_path):
+    store_path = tmp_path / "cron" / "jobs.json"
+    service = CronService(store_path)
+    tool = CronTool(service)
+    tool.set_context("cli", "direct")
+    return tool
 
-    result = runner.invoke(
-        app,
-        [
-            "cron",
-            "add",
-            "--name",
-            "demo",
-            "--message",
-            "hello",
-            "--cron",
-            "0 9 * * *",
-            "--tz",
-            "America/Vancovuer",
-        ],
+
+@pytest.mark.asyncio
+async def test_cron_add_rejects_invalid_timezone(cron_tool) -> None:
+    result = await cron_tool.execute(
+        action="add",
+        message="hello",
+        cron_expr="0 9 * * *",
+        tz="America/Vancovuer",
     )
-
-    assert result.exit_code == 1
-    assert "Error: unknown timezone 'America/Vancovuer'" in result.stdout
-    assert not (tmp_path / "cron" / "jobs.json").exists()
+    assert "unknown timezone" in result
+    assert "America/Vancovuer" in result

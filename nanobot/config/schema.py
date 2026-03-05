@@ -185,20 +185,6 @@ class QQConfig(Base):
     secret: str = ""  # 机器人密钥 (AppSecret) from q.qq.com
     allow_from: list[str] = Field(default_factory=list)  # Allowed user openids (empty = public access)
 
-class MatrixConfig(Base):
-    """Matrix (Element) channel configuration."""
-    enabled: bool = False
-    homeserver: str = "https://matrix.org"
-    access_token: str = ""
-    user_id: str = ""                       # e.g. @bot:matrix.org
-    device_id: str = ""
-    e2ee_enabled: bool = True               # end-to-end encryption support
-    sync_stop_grace_seconds: int = 2        # graceful sync_forever shutdown timeout
-    max_media_bytes: int = 20 * 1024 * 1024 # inbound + outbound attachment limit
-    allow_from: list[str] = Field(default_factory=list)
-    group_policy: Literal["open", "mention", "allowlist"] = "open"
-    group_allow_from: list[str] = Field(default_factory=list)
-    allow_room_mentions: bool = False
 
 class ChannelsConfig(Base):
     """Configuration for chat channels."""
@@ -230,10 +216,62 @@ class AgentDefaults(Base):
     reasoning_effort: str | None = None  # low / medium / high — enables LLM thinking mode
 
 
+class IdentityConfig(Base):
+    """Agent identity configuration."""
+
+    name: str | None = None  # Display name for the agent
+    description: str | None = None  # Brief description of the agent's role
+    avatar: str | None = None  # Path or URL to avatar image
+
+
+class SubagentsConfig(Base):
+    """Subagent spawning configuration."""
+
+    allow_agents: list[str] = Field(default_factory=list)  # Agent IDs allowed to spawn ("*" for any)
+    model: str | None = None  # Default model for spawned subagents
+
+
+class AgentEntryConfig(Base):
+    """Configuration for a single agent in the multi-agent setup."""
+
+    id: str  # Unique agent identifier
+    default: bool = False  # Whether this is the default agent
+    name: str | None = None  # Display name
+    workspace: str | None = None  # Agent-specific workspace (overrides defaults)
+    model: str | None = None  # Agent-specific model (overrides defaults)
+    provider: str | None = None  # Agent-specific provider (overrides defaults)
+    max_tokens: int | None = None  # Agent-specific max tokens
+    temperature: float | None = None  # Agent-specific temperature
+    skills: list[str] | None = None  # Allowed skills for this agent (None = all, [] = none)
+    identity: IdentityConfig | None = None  # Agent identity config
+    subagents: SubagentsConfig | None = None  # Subagent spawning config
+
+
+class AgentBindingMatch(Base):
+    """Matching criteria for agent bindings."""
+
+    channel: str  # Channel name (telegram, discord, feishu, etc.)
+    account_id: str | None = None  # Specific account ID
+    peer_type: Literal["direct", "group", "channel"] | None = None  # Chat type
+    peer_id: str | None = None  # Specific peer/chat ID
+    guild_id: str | None = None  # Discord guild ID
+    team_id: str | None = None  # Slack team ID
+
+
+class AgentBindingConfig(Base):
+    """Binding configuration to route messages to specific agents."""
+
+    agent_id: str  # Target agent ID
+    comment: str | None = None  # Optional description
+    match: AgentBindingMatch  # Matching criteria
+
+
 class AgentsConfig(Base):
-    """Agent configuration."""
+    """Agent configuration with multi-agent support."""
 
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
+    agent_list: list[AgentEntryConfig] = Field(default_factory=list, alias="list")  # Multi-agent definitions
+    bindings: list[AgentBindingConfig] = Field(default_factory=list)  # Channel-to-agent bindings
 
 
 class ProviderConfig(Base):

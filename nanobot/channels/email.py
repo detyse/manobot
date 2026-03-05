@@ -25,11 +25,11 @@ from nanobot.config.schema import EmailConfig
 class EmailChannel(BaseChannel):
     """
     Email channel.
-
+    
     Inbound:
     - Poll IMAP mailbox for unread messages.
     - Convert each message into an inbound event.
-
+    
     Outbound:
     - Send responses via SMTP back to the sender address.
     """
@@ -86,7 +86,7 @@ class EmailChannel(BaseChannel):
                         self._last_subject_by_chat[sender] = subject
                     if message_id:
                         self._last_message_id_by_chat[sender] = message_id
-
+                    
                     await self._handle_message(
                         sender_id=sender,
                         chat_id=sender,
@@ -95,7 +95,7 @@ class EmailChannel(BaseChannel):
                     )
             except Exception as e:
                 logger.error("Email polling error: {}", e)
-
+            
             await asyncio.sleep(poll_seconds)
 
     async def stop(self) -> None:
@@ -120,7 +120,7 @@ class EmailChannel(BaseChannel):
         # Determine if this is a reply (recipient has sent us an email before)
         is_reply = to_addr in self._last_subject_by_chat
         force_send = bool((msg.metadata or {}).get("force_send"))
-
+        
         # autoReplyEnabled only controls automatic replies, not proactive sends
         if is_reply and not self.config.auto_reply_enabled and not force_send:
             logger.info("Skip automatic email reply to {}: auto_reply_enabled is false", to_addr)
@@ -293,6 +293,7 @@ class EmailChannel(BaseChannel):
                     "date": date_value,
                     "sender_email": sender,
                     "uid": uid,
+                    "peer_type": "direct",  # Email is always point-to-point
                 }
                 messages.append(
                     {

@@ -432,6 +432,7 @@ class DingTalkChannel(BaseChannel):
                 metadata={
                     "sender_name": sender_name,
                     "platform": "dingtalk",
+                    "peer_type": "direct",  # DingTalk stream mode is private chat only
                 },
             )
         except Exception as e:

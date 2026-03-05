@@ -16,12 +16,13 @@ WORKDIR /app
 
 # Install Python dependencies first (cached layer)
 COPY pyproject.toml README.md LICENSE ./
-RUN mkdir -p nanobot bridge && touch nanobot/__init__.py && \
+RUN mkdir -p nanobot manobot bridge && touch nanobot/__init__.py manobot/__init__.py && \
     uv pip install --system --no-cache . && \
-    rm -rf nanobot bridge
+    rm -rf nanobot manobot bridge
 
 # Copy the full source and install
 COPY nanobot/ nanobot/
+COPY manobot/ manobot/
 COPY bridge/ bridge/
 RUN uv pip install --system --no-cache .
 
@@ -30,11 +31,11 @@ WORKDIR /app/bridge
 RUN npm install && npm run build
 WORKDIR /app
 
-# Create config directory
-RUN mkdir -p /root/.nanobot
+# Create config directories
+RUN mkdir -p /root/.nanobot /root/.manobot
 
 # Gateway default port
 EXPOSE 18790
 
-ENTRYPOINT ["nanobot"]
+ENTRYPOINT ["manobot"]
 CMD ["status"]

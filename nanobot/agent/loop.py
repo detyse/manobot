@@ -65,6 +65,7 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
+        memory_store: MemoryStore | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig
         self.bus = bus
@@ -82,8 +83,9 @@ class AgentLoop:
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
+        self.memory_store = memory_store
 
-        self.context = ContextBuilder(workspace)
+        self.context = ContextBuilder(workspace, memory_store=memory_store)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
@@ -489,7 +491,8 @@ class AgentLoop:
 
     async def _consolidate_memory(self, session, archive_all: bool = False) -> bool:
         """Delegate to MemoryStore.consolidate(). Returns True on success."""
-        return await MemoryStore(self.workspace).consolidate(
+        store = self.memory_store or MemoryStore(self.workspace)
+        return await store.consolidate(
             session, self.provider, self.model,
             archive_all=archive_all, memory_window=self.memory_window,
         )
@@ -500,10 +503,44 @@ class AgentLoop:
         session_key: str = "cli:direct",
         channel: str = "cli",
         chat_id: str = "direct",
+        media: list[str] | None = None,
         on_progress: Callable[[str], Awaitable[None]] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
-        """Process a message directly (for CLI or cron usage)."""
+        """Process a message directly (for CLI, gateway, or cron usage).
+        
+        Args:
+            content: Message content
+            session_key: Session identifier
+            channel: Channel name
+            chat_id: Chat identifier
+            media: Optional list of media URLs/paths
+            on_progress: Optional progress callback
+            metadata: Optional channel-specific metadata (forwarded to tool context)
+        """
         await self._connect_mcp()
-        msg = InboundMessage(channel=channel, sender_id="user", chat_id=chat_id, content=content)
-        response = await self._process_message(msg, session_key=session_key, on_progress=on_progress)
+        
+        # Handle /stop command - cancel active tasks for this session
+        if content.strip().lower() == "/stop":
+            tasks = self._active_tasks.pop(session_key, [])
+            cancelled = sum(1 for t in tasks if not t.done() and t.cancel())
+            for t in tasks:
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):
+                    pass
+            sub_cancelled = await self.subagents.cancel_by_session(session_key)
+            total = cancelled + sub_cancelled
+            return f"⏹ Stopped {total} task(s)." if total else "No active task to stop."
+        
+        msg = InboundMessage(
+            channel=channel,
+            sender_id="user",
+            chat_id=chat_id,
+            content=content,
+            media=media or [],
+            metadata=metadata or {},
+        )
+        async with self._processing_lock:
+            response = await self._process_message(msg, session_key=session_key, on_progress=on_progress)
         return response.content if response else ""

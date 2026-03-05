@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from manobot.agents.scope import normalize_agent_id, resolve_default_agent_id
+from manobot.agents.scope import list_agent_ids, normalize_agent_id, resolve_default_agent_id
 
 if TYPE_CHECKING:
     from nanobot.config.schema import AgentBindingConfig, Config
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 @dataclass
 class RouteMatch:
     """Result of a route matching operation."""
-    
+
     agent_id: str
     binding_index: int | None = None  # Index of matched binding, None if default
     comment: str | None = None  # Binding comment if any
@@ -36,7 +36,7 @@ def matches_binding(
     team_id: str | None = None,
 ) -> bool:
     """Check if a message matches a binding configuration.
-    
+
     Args:
         binding: Binding configuration to match against
         channel: Channel name (telegram, discord, etc.)
@@ -45,41 +45,41 @@ def matches_binding(
         peer_type: Chat type (direct, group, channel)
         guild_id: Discord guild ID
         team_id: Slack team ID
-        
+
     Returns:
         True if the message matches the binding
     """
     match = binding.match
-    
+
     # Channel must match
     if match.channel.lower() != channel.lower():
         return False
-    
-    # Check optional peer_type
-    if match.peer_type and peer_type:
-        if match.peer_type.lower() != peer_type.lower():
+
+    # Check optional peer_type - binding requires it but message lacks it => no match
+    if match.peer_type:
+        if not peer_type or match.peer_type.lower() != peer_type.lower():
             return False
-    
-    # Check optional peer_id (chat_id)
-    if match.peer_id and chat_id:
-        if match.peer_id != chat_id:
+
+    # Check optional peer_id (chat_id) - binding requires it but message lacks it => no match
+    if match.peer_id:
+        if not chat_id or match.peer_id != chat_id:
             return False
-    
-    # Check optional account_id (sender_id)
-    if match.account_id and sender_id:
-        if match.account_id != sender_id:
+
+    # Check optional account_id (sender_id) - binding requires it but message lacks it => no match
+    if match.account_id:
+        if not sender_id or match.account_id != sender_id:
             return False
-    
-    # Check optional guild_id (Discord)
-    if match.guild_id and guild_id:
-        if match.guild_id != guild_id:
+
+    # Check optional guild_id (Discord) - binding requires it but message lacks it => no match
+    if match.guild_id:
+        if not guild_id or match.guild_id != guild_id:
             return False
-    
-    # Check optional team_id (Slack)
-    if match.team_id and team_id:
-        if match.team_id != team_id:
+
+    # Check optional team_id (Slack) - binding requires it but message lacks it => no match
+    if match.team_id:
+        if not team_id or match.team_id != team_id:
             return False
-    
+
     return True
 
 
@@ -93,10 +93,10 @@ def resolve_agent_for_message(
     team_id: str | None = None,
 ) -> RouteMatch:
     """Resolve which agent should handle a message.
-    
+
     Iterates through bindings in order and returns the first match.
     Falls back to the default agent if no bindings match.
-    
+
     Args:
         config: Application configuration
         channel: Channel name
@@ -105,12 +105,13 @@ def resolve_agent_for_message(
         peer_type: Chat type
         guild_id: Discord guild ID
         team_id: Slack team ID
-        
+
     Returns:
         RouteMatch with the target agent ID
     """
     bindings = config.agents.bindings
-    
+    configured_ids = set(normalize_agent_id(i) for i in list_agent_ids(config))
+
     for idx, binding in enumerate(bindings):
         if matches_binding(
             binding,
@@ -122,6 +123,18 @@ def resolve_agent_for_message(
             team_id=team_id,
         ):
             agent_id = normalize_agent_id(binding.agent_id)
+            if agent_id not in configured_ids:
+                default_id = resolve_default_agent_id(config)
+                logger.warning(
+                    "Binding #{} matched {}:{}, but agent '{}' is not configured; "
+                    "routing to default agent '{}'.",
+                    idx,
+                    channel,
+                    chat_id,
+                    agent_id,
+                    default_id,
+                )
+                return RouteMatch(agent_id=default_id)
             logger.debug(
                 "Route matched: {} -> {} (binding #{})",
                 f"{channel}:{chat_id}",
@@ -133,7 +146,7 @@ def resolve_agent_for_message(
                 binding_index=idx,
                 comment=binding.comment,
             )
-    
+
     # Fall back to default agent
     default_id = resolve_default_agent_id(config)
     logger.debug(
@@ -146,20 +159,20 @@ def resolve_agent_for_message(
 
 class MessageRouter:
     """Message router for multi-agent message handling.
-    
+
     Provides methods to route incoming messages to appropriate agents
     and manage routing state.
     """
-    
+
     def __init__(self, config: Config):
         """Initialize the message router.
-        
+
         Args:
             config: Application configuration
         """
         self.config = config
         self._route_cache: dict[str, RouteMatch] = {}
-    
+
     def route(
         self,
         channel: str,
@@ -171,7 +184,7 @@ class MessageRouter:
         use_cache: bool = True,
     ) -> RouteMatch:
         """Route a message to an agent.
-        
+
         Args:
             channel: Channel name
             chat_id: Chat/conversation ID
@@ -180,16 +193,16 @@ class MessageRouter:
             guild_id: Discord guild ID
             team_id: Slack team ID
             use_cache: Whether to use cached routes
-            
+
         Returns:
             RouteMatch with the target agent ID
         """
-        # Build cache key
-        cache_key = f"{channel}:{chat_id}:{peer_type}:{guild_id}:{team_id}"
-        
+        # Build cache key - include sender_id since account_id matching uses it
+        cache_key = f"{channel}:{chat_id}:{sender_id}:{peer_type}:{guild_id}:{team_id}"
+
         if use_cache and cache_key in self._route_cache:
             return self._route_cache[cache_key]
-        
+
         result = resolve_agent_for_message(
             self.config,
             channel=channel,
@@ -199,19 +212,19 @@ class MessageRouter:
             guild_id=guild_id,
             team_id=team_id,
         )
-        
+
         if use_cache:
             self._route_cache[cache_key] = result
-        
+
         return result
-    
+
     def clear_cache(self) -> None:
         """Clear the routing cache."""
         self._route_cache.clear()
-    
+
     def invalidate_route(self, channel: str, chat_id: str | None = None) -> None:
         """Invalidate cached route for a specific channel/chat.
-        
+
         Args:
             channel: Channel name
             chat_id: Chat ID (if None, invalidates all for channel)
@@ -220,14 +233,14 @@ class MessageRouter:
             prefix = f"{channel}:{chat_id}:"
         else:
             prefix = f"{channel}:"
-        
+
         keys_to_remove = [k for k in self._route_cache if k.startswith(prefix)]
         for key in keys_to_remove:
             del self._route_cache[key]
-    
+
     def list_bindings(self) -> list[dict]:
         """List all configured bindings.
-        
+
         Returns:
             List of binding configurations as dicts
         """

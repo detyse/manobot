@@ -657,6 +657,9 @@ class MatrixChannel(BaseChannel):
             meta["event_id"] = eid
         if thread := self._thread_metadata(event):
             meta.update(thread)
+        # Determine peer_type: Matrix direct rooms have is_direct=True
+        is_direct = getattr(room, "is_direct", False) or len(getattr(room, "users", {})) <= 2
+        meta["peer_type"] = "direct" if is_direct else "group"
         return meta
 
     async def _on_message(self, room: MatrixRoom, event: RoomMessageText) -> None:

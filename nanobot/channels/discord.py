@@ -262,6 +262,10 @@ class DiscordChannel(BaseChannel):
 
         await self._start_typing(channel_id)
 
+        # Determine peer_type: if guild_id exists, it's a server (group), otherwise DM (direct)
+        guild_id = payload.get("guild_id")
+        peer_type = "group" if guild_id else "direct"
+
         await self._handle_message(
             sender_id=sender_id,
             chat_id=channel_id,
@@ -269,8 +273,9 @@ class DiscordChannel(BaseChannel):
             media=media_paths,
             metadata={
                 "message_id": str(payload.get("id", "")),
-                "guild_id": payload.get("guild_id"),
+                "guild_id": guild_id,
                 "reply_to": reply_to,
+                "peer_type": peer_type,
             },
         )
 

@@ -45,8 +45,14 @@ _SAVE_MEMORY_TOOL = [
 class MemoryStore:
     """Two-layer memory: MEMORY.md (long-term facts) + HISTORY.md (grep-searchable log)."""
 
-    def __init__(self, workspace: Path):
-        self.memory_dir = ensure_dir(workspace / "memory")
+    def __init__(self, workspace: Path, memory_dir: Path | None = None):
+        """Initialize memory store.
+
+        Args:
+            workspace: Workspace directory (used if memory_dir not specified)
+            memory_dir: Optional explicit memory directory for agent isolation
+        """
+        self.memory_dir = ensure_dir(memory_dir or (workspace / "memory"))
         self.memory_file = self.memory_dir / "MEMORY.md"
         self.history_file = self.memory_dir / "HISTORY.md"
 

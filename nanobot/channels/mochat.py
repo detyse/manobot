@@ -759,6 +759,7 @@ class MochatChannel(BaseChannel):
                 "sender_name": last.sender_name, "sender_username": last.sender_username,
                 "target_kind": target_kind, "was_mentioned": was_mentioned,
                 "buffered_count": len(entries),
+                "peer_type": "group" if is_group else "direct",
             },
         )
 

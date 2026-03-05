@@ -747,6 +747,9 @@ class FeishuChannel(BaseChannel):
                 return
 
             # Forward to message bus
+            # Determine peer_type from chat_type: p2p = direct, group = group
+            peer_type = "direct" if chat_type == "p2p" else "group"
+
             reply_to = chat_id if chat_type == "group" else sender_id
             await self._handle_message(
                 sender_id=sender_id,
@@ -757,6 +760,7 @@ class FeishuChannel(BaseChannel):
                     "message_id": message_id,
                     "chat_type": chat_type,
                     "msg_type": msg_type,
+                    "peer_type": peer_type,
                 }
             )
 

@@ -411,6 +411,8 @@ class TelegramChannel(BaseChannel):
         # Telegram media groups: buffer briefly, forward as one aggregated turn.
         if media_group_id := getattr(message, "media_group_id", None):
             key = f"{str_chat_id}:{media_group_id}"
+            # Determine peer_type from chat type
+            peer_type = "group" if message.chat.type in ("group", "supergroup") else "direct"
             if key not in self._media_group_buffers:
                 self._media_group_buffers[key] = {
                     "sender_id": sender_id, "chat_id": str_chat_id,
@@ -419,6 +421,7 @@ class TelegramChannel(BaseChannel):
                         "message_id": message.message_id, "user_id": user.id,
                         "username": user.username, "first_name": user.first_name,
                         "is_group": message.chat.type != "private",
+                        "peer_type": peer_type,
                     },
                 }
                 self._start_typing(str_chat_id)
@@ -444,7 +447,8 @@ class TelegramChannel(BaseChannel):
                 "user_id": user.id,
                 "username": user.username,
                 "first_name": user.first_name,
-                "is_group": message.chat.type != "private"
+                "is_group": message.chat.type != "private",
+                "peer_type": "group" if message.chat.type in ("group", "supergroup") else "direct",
             }
         )
 

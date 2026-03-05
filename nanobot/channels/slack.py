@@ -182,6 +182,9 @@ class SlackChannel(BaseChannel):
         session_key = f"slack:{chat_id}:{thread_ts}" if thread_ts and channel_type != "im" else None
 
         try:
+            # Determine peer_type from channel_type
+            peer_type = "direct" if channel_type == "im" else "group"
+
             await self._handle_message(
                 sender_id=sender_id,
                 chat_id=chat_id,
@@ -192,6 +195,8 @@ class SlackChannel(BaseChannel):
                         "thread_ts": thread_ts,
                         "channel_type": channel_type,
                     },
+                    "peer_type": peer_type,
+                    "team_id": payload.get("team_id"),
                 },
                 session_key=session_key,
             )
