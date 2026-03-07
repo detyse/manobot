@@ -1,0 +1,185 @@
+"""Multi-account channel manager.
+
+Extends the nanobot ChannelManager to support multiple bot accounts per
+platform.  Channels are keyed as ``"{channel}:{account_id}"`` (or just
+``"{channel}"`` for single-account backwards compatibility).
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import TYPE_CHECKING, Any
+
+from loguru import logger
+
+from nanobot.channels.base import BaseChannel
+
+if TYPE_CHECKING:
+    from nanobot.bus.events import OutboundMessage
+    from nanobot.bus.queue import MessageBus
+    from nanobot.config.schema import Config
+
+    from manobot.accounts.registry import AccountRegistry
+
+
+class MultiAccountChannelManager:
+    """Channel manager with multi-account support.
+
+    Unlike the base ``ChannelManager`` which creates one instance per
+    platform, this manager creates one instance per (platform, account_id)
+    pair, allowing multiple bots on the same platform.
+    """
+
+    def __init__(
+        self,
+        config: Config,
+        bus: MessageBus,
+        account_registry: AccountRegistry,
+    ):
+        self.config = config
+        self.bus = bus
+        self.account_registry = account_registry
+        self.channels: dict[str, BaseChannel] = {}
+        self._dispatch_task: asyncio.Task | None = None
+
+        self._init_channels()
+
+    def _init_channels(self) -> None:
+        """Initialize channels from account registry."""
+        from manobot.accounts.channel_factory import build_channels
+
+        self.channels = build_channels(
+            self.config, self.bus, self.account_registry,
+        )
+        self._validate_allow_from()
+
+    def _validate_allow_from(self) -> None:
+        """Validate that no channel has an empty allow_from list."""
+        for name, ch in self.channels.items():
+            if getattr(ch.config, "allow_from", None) == []:
+                raise SystemExit(
+                    f'Error: "{name}" has empty allowFrom (denies all). '
+                    f'Set ["*"] to allow everyone, or add specific user IDs.'
+                )
+
+    def _resolve_channel_for_outbound(self, msg: OutboundMessage) -> BaseChannel | None:
+        """Find the right channel instance for an outbound message.
+
+        Lookup order:
+        1. ``"{channel}:{account_id}"`` (exact match)
+        2. ``"{channel}"`` (bare channel name, single-account fallback)
+        """
+        account_id = getattr(msg, "account_id", "default")
+
+        # Try compound key first
+        compound_key = f"{msg.channel}:{account_id}"
+        channel = self.channels.get(compound_key)
+        if channel:
+            return channel
+
+        # Fall back to bare channel name
+        return self.channels.get(msg.channel)
+
+    async def _start_channel(self, name: str, channel: BaseChannel) -> None:
+        """Start a channel and log any exceptions."""
+        try:
+            await channel.start()
+        except Exception as e:
+            logger.error("Failed to start channel {}: {}", name, e)
+
+    async def start_all(self) -> None:
+        """Start all channels and the outbound dispatcher."""
+        if not self.channels:
+            logger.warning("No channels enabled")
+            return
+
+        # Start outbound dispatcher
+        self._dispatch_task = asyncio.create_task(self._dispatch_outbound())
+
+        # Start channels
+        tasks = []
+        for name, channel in self.channels.items():
+            logger.info("Starting {} channel...", name)
+            tasks.append(asyncio.create_task(self._start_channel(name, channel)))
+
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def stop_all(self) -> None:
+        """Stop all channels and the dispatcher."""
+        logger.info("Stopping all channels...")
+
+        if self._dispatch_task:
+            self._dispatch_task.cancel()
+            try:
+                await self._dispatch_task
+            except asyncio.CancelledError:
+                pass
+
+        for name, channel in self.channels.items():
+            try:
+                await channel.stop()
+                logger.info("Stopped {} channel", name)
+            except Exception as e:
+                logger.error("Error stopping {}: {}", name, e)
+
+    async def _dispatch_outbound(self) -> None:
+        """Dispatch outbound messages to the appropriate channel instance."""
+        logger.info("Outbound dispatcher started (multi-account)")
+
+        while True:
+            try:
+                msg = await asyncio.wait_for(
+                    self.bus.consume_outbound(),
+                    timeout=1.0,
+                )
+
+                if msg.metadata.get("_progress"):
+                    if msg.metadata.get("_tool_hint") and not self.config.channels.send_tool_hints:
+                        continue
+                    if not msg.metadata.get("_tool_hint") and not self.config.channels.send_progress:
+                        continue
+
+                channel = self._resolve_channel_for_outbound(msg)
+                if channel:
+                    try:
+                        await channel.send(msg)
+                    except Exception as e:
+                        logger.error("Error sending to {}: {}", msg.channel, e)
+                else:
+                    logger.warning("No channel instance for: {} (account={})",
+                                   msg.channel, getattr(msg, "account_id", "default"))
+
+            except asyncio.TimeoutError:
+                continue
+            except asyncio.CancelledError:
+                break
+
+    def get_channel(self, name: str, account_id: str = "default") -> BaseChannel | None:
+        """Get a channel instance by name and optional account_id."""
+        compound = f"{name}:{account_id}"
+        return self.channels.get(compound) or self.channels.get(name)
+
+    def get_status(self) -> dict[str, Any]:
+        """Get status of all channel instances."""
+        return {
+            name: {
+                "enabled": True,
+                "running": channel.is_running,
+            }
+            for name, channel in self.channels.items()
+        }
+
+    @property
+    def enabled_channels(self) -> list[str]:
+        """Get list of enabled channel keys.
+
+        Returns bare channel names (deduplicated) for compatibility.
+        """
+        names: list[str] = []
+        seen: set[str] = set()
+        for key in self.channels:
+            bare = key.split(":")[0]
+            if bare not in seen:
+                seen.add(bare)
+                names.append(bare)
+        return names
