@@ -8,8 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from nanobot.agent.memory import MemoryStore
-from nanobot.agent.skills import SkillsLoader
+from agent.agent.memory import MemoryStore
+from agent.agent.skills import SkillsLoader
 
 
 class ContextBuilder:

@@ -1,6 +1,6 @@
 """Chat channels module with plugin architecture."""
 
-from nanobot.channels.base import BaseChannel
-from nanobot.channels.manager import ChannelManager
+from agent.channels.base import BaseChannel
+from agent.channels.manager import ChannelManager
 
 __all__ = ["BaseChannel", "ChannelManager"]

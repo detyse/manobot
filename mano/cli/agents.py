@@ -12,7 +12,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from manobot.agents.scope import (
+from mano.agents.scope import (
     list_agent_ids,
     normalize_agent_id,
     resolve_agent_config,
@@ -47,7 +47,7 @@ Common workflows:
 
 def _load_config():
     """Load configuration from nanobot."""
-    from nanobot.config.loader import load_config
+    from agent.config.loader import load_config
     return load_config()
 
 
@@ -182,7 +182,7 @@ def add_agent(
         manobot agents add writer --model "openai/gpt-4o" --workspace ~/writing
         manobot agents add assistant-v2 --default
     """
-    from nanobot.config.loader import get_config_path
+    from agent.config.loader import get_config_path
 
     config = _load_config()
     normalized_id = normalize_agent_id(agent_id)
@@ -330,7 +330,7 @@ def delete_agent(
         manobot agents delete old-agent          # Delete with confirmation
         manobot agents delete old-agent --force  # Delete without confirmation
     """
-    from nanobot.config.loader import get_config_path
+    from agent.config.loader import get_config_path
 
     config = _load_config()
     normalized_id = normalize_agent_id(agent_id)
@@ -381,7 +381,7 @@ def set_default(
         manobot agents set-default assistant
         manobot agents set-default coder
     """
-    from nanobot.config.loader import get_config_path
+    from agent.config.loader import get_config_path
 
     config = _load_config()
     normalized_id = normalize_agent_id(agent_id)
@@ -494,7 +494,7 @@ def add_binding(
         # Route Discord DMs to 'support' agent
         manobot agents bind support --channel discord --peer-type direct --comment "Support requests"
     """
-    from nanobot.config.loader import get_config_path
+    from agent.config.loader import get_config_path
 
     config = _load_config()
     normalized_id = normalize_agent_id(agent_id)

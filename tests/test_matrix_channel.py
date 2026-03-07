@@ -4,9 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import MatrixConfig
+from agent.bus.events import OutboundMessage
+from agent.bus.queue import MessageBus
+from agent.config.schema import MatrixConfig
 
 matrix_module = pytest.importorskip("nanobot.channels.matrix", exc_type=ImportError)
 MATRIX_HTML_FORMAT = matrix_module.MATRIX_HTML_FORMAT

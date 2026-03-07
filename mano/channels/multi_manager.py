@@ -12,14 +12,14 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from nanobot.channels.base import BaseChannel
+from agent.channels.base import BaseChannel
 
 if TYPE_CHECKING:
-    from nanobot.bus.events import OutboundMessage
-    from nanobot.bus.queue import MessageBus
-    from nanobot.config.schema import Config
+    from agent.bus.events import OutboundMessage
+    from agent.bus.queue import MessageBus
+    from agent.config.schema import Config
 
-    from manobot.accounts.registry import AccountRegistry
+    from mano.accounts.registry import AccountRegistry
 
 
 class MultiAccountChannelManager:
@@ -46,7 +46,7 @@ class MultiAccountChannelManager:
 
     def _init_channels(self) -> None:
         """Initialize channels from account registry."""
-        from manobot.accounts.channel_factory import build_channels
+        from mano.accounts.channel_factory import build_channels
 
         self.channels = build_channels(
             self.config, self.bus, self.account_registry,

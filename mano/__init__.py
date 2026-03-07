@@ -3,7 +3,7 @@
 __version__ = "0.1.0"
 __logo__ = "🤖"
 
-from manobot.agents.scope import (
+from mano.agents.scope import (
     DEFAULT_AGENT_ID,
     list_agent_entries,
     list_agent_ids,

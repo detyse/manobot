@@ -12,11 +12,11 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from manobot.agents.scope import list_agent_ids, normalize_agent_id, resolve_fallback_agent_id
-from manobot.bindings.resolver import BindingResolver, InboundContext, RouteDecision, RouteTier
+from mano.agents.scope import list_agent_ids, normalize_agent_id, resolve_fallback_agent_id
+from mano.bindings.resolver import BindingResolver, InboundContext, RouteDecision, RouteTier
 
 if TYPE_CHECKING:
-    from nanobot.config.schema import Config
+    from agent.config.schema import Config
 
 
 # Backwards-compatible alias

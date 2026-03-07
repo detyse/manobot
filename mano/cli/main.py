@@ -19,8 +19,8 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.text import Text
 
-from manobot import __version__
-from manobot.cli.agents import agents_app
+from mano import __version__
+from mano.cli.agents import agents_app
 
 console = Console()
 
@@ -50,8 +50,8 @@ For more help: https://github.com/HKUDS/nanobot
 app.add_typer(agents_app, name="agents")
 
 # Register channels and provider subcommands
-from manobot.cli.channels import channels_app
-from manobot.cli.providers import provider_app
+from mano.cli.channels import channels_app
+from mano.cli.providers import provider_app
 
 app.add_typer(channels_app, name="channels")
 app.add_typer(provider_app, name="provider")
@@ -166,10 +166,10 @@ def _make_provider_for_model(config, model: str | None = None, provider_override
     Returns:
         LLMProvider instance
     """
-    from nanobot.providers.custom_provider import CustomProvider
-    from nanobot.providers.litellm_provider import LiteLLMProvider
-    from nanobot.providers.openai_codex_provider import OpenAICodexProvider
-    from nanobot.providers.registry import find_by_name
+    from agent.providers.custom_provider import CustomProvider
+    from agent.providers.litellm_provider import LiteLLMProvider
+    from agent.providers.openai_codex_provider import OpenAICodexProvider
+    from agent.providers.registry import find_by_name
 
     effective_model = model or config.agents.defaults.model
 
@@ -225,8 +225,8 @@ def _make_provider_for_model(config, model: str | None = None, provider_override
 @app.command()
 def version():
     """Show manobot and nanobot version information."""
-    from nanobot import __logo__ as nanobot_logo
-    from nanobot import __version__ as nanobot_version
+    from agent import __logo__ as nanobot_logo
+    from agent import __version__ as nanobot_version
 
     console.print(f"[bold cyan]manobot[/bold cyan] version: [green]{__version__}[/green]")
     console.print(f"{nanobot_logo} [bold cyan]nanobot[/bold cyan] version: [green]{nanobot_version}[/green]")
@@ -247,7 +247,7 @@ def init(
         manobot init              # First-time setup
         manobot init --force      # Re-initialize (resets to defaults)
     """
-    from manobot.agents.init import get_manobot_state_dir, initialize_manobot
+    from mano.agents.init import get_manobot_state_dir, initialize_manobot
 
     state_dir = get_manobot_state_dir()
 
@@ -292,12 +292,12 @@ def status():
     Example:
         manobot status
     """
-    from manobot.agents.init import initialize_manobot
-    from manobot.agents.scope import (
+    from mano.agents.init import initialize_manobot
+    from mano.agents.scope import (
         list_agent_ids,
         resolve_fallback_agent_id,
     )
-    from nanobot.config.loader import load_config
+    from agent.config.loader import load_config
 
     # Auto-initialize if needed
     initialize_manobot()
@@ -343,24 +343,24 @@ def gateway(
     """
     from loguru import logger
 
-    from manobot.accounts.registry import AccountRegistry
-    from manobot.agents.init import ensure_default_agent, initialize_manobot
-    from manobot.agents.pool import AgentPool
-    from manobot.agents.scope import (
+    from mano.accounts.registry import AccountRegistry
+    from mano.agents.init import ensure_default_agent, initialize_manobot
+    from mano.agents.pool import AgentPool
+    from mano.agents.scope import (
         list_agent_ids,
         normalize_agent_id,
         resolve_fallback_agent_id,
     )
-    from manobot.bindings.router import MessageRouter
-    from manobot.channels.multi_manager import MultiAccountChannelManager
-    from manobot.sessions.ownership import PeerFingerprint, SessionOwnershipStore
-    from nanobot.bus.events import InboundMessage, OutboundMessage
-    from nanobot.bus.queue import MessageBus
-    from nanobot.config.loader import get_data_dir, load_config
-    from nanobot.cron.service import CronService
-    from nanobot.cron.types import CronJob
-    from nanobot.heartbeat.service import HeartbeatService
-    from nanobot.utils.helpers import sync_workspace_templates
+    from mano.bindings.router import MessageRouter
+    from mano.channels.multi_manager import MultiAccountChannelManager
+    from mano.sessions.ownership import PeerFingerprint, SessionOwnershipStore
+    from agent.bus.events import InboundMessage, OutboundMessage
+    from agent.bus.queue import MessageBus
+    from agent.config.loader import get_data_dir, load_config
+    from agent.cron.service import CronService
+    from agent.cron.types import CronJob
+    from agent.heartbeat.service import HeartbeatService
+    from agent.utils.helpers import sync_workspace_templates
 
     if verbose:
         import logging
@@ -451,8 +451,8 @@ def gateway(
     # Cron job callback
     async def on_cron_job(job: CronJob) -> str | None:
         """Execute a cron job through the appropriate agent."""
-        from nanobot.agent.tools.cron import CronTool
-        from nanobot.agent.tools.message import MessageTool
+        from agent.agent.tools.cron import CronTool
+        from agent.agent.tools.message import MessageTool
 
         # Determine which agent should handle this cron job
         # Use default agent for cron jobs (could be extended to support per-job agent)
@@ -773,18 +773,18 @@ def agent_chat(
     """
     from loguru import logger
 
-    from manobot.agents.init import ensure_default_agent, initialize_manobot
-    from manobot.agents.pool import AgentPool
-    from manobot.agents.scope import (
+    from mano.agents.init import ensure_default_agent, initialize_manobot
+    from mano.agents.pool import AgentPool
+    from mano.agents.scope import (
         build_agent_scope,
         list_agent_ids,
         resolve_fallback_agent_id,
     )
-    from nanobot.bus.events import InboundMessage
-    from nanobot.bus.queue import MessageBus
-    from nanobot.config.loader import get_data_dir, load_config
-    from nanobot.cron.service import CronService
-    from nanobot.utils.helpers import sync_workspace_templates
+    from agent.bus.events import InboundMessage
+    from agent.bus.queue import MessageBus
+    from agent.config.loader import get_data_dir, load_config
+    from agent.cron.service import CronService
+    from agent.utils.helpers import sync_workspace_templates
 
     if logs:
         logger.enable("nanobot")

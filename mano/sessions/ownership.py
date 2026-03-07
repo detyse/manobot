@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from manobot.agents.scope import normalize_agent_id
+from mano.agents.scope import normalize_agent_id
 
 
 @dataclass(frozen=True)

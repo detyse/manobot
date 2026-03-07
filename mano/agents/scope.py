@@ -14,10 +14,10 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from manobot.agents.scope_model import AgentScope
+from mano.agents.scope_model import AgentScope
 
 if TYPE_CHECKING:
-    from nanobot.config.schema import AgentEntryConfig, Config
+    from agent.config.schema import AgentEntryConfig, Config
 
 # Default agent ID when no agents are configured
 DEFAULT_AGENT_ID = "default"

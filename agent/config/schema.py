@@ -391,7 +391,7 @@ class Config(BaseSettings):
 
     def _match_provider(self, model: str | None = None) -> tuple["ProviderConfig | None", str | None]:
         """Match provider config and its registry name. Returns (config, spec_name)."""
-        from nanobot.providers.registry import PROVIDERS
+        from agent.providers.registry import PROVIDERS
 
         forced = self.agents.defaults.provider
         if forced != "auto":
@@ -448,7 +448,7 @@ class Config(BaseSettings):
 
     def get_api_base(self, model: str | None = None) -> str | None:
         """Get API base URL for the given model. Applies default URLs for known gateways."""
-        from nanobot.providers.registry import find_by_name
+        from agent.providers.registry import find_by_name
 
         p, name = self._match_provider(model)
         if p and p.api_base:

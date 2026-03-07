@@ -2,8 +2,8 @@
 
 import pytest
 
-from nanobot.agent.tools.cron import CronTool
-from nanobot.cron.service import CronService
+from agent.agent.tools.cron import CronTool
+from agent.cron.service import CronService
 
 
 @pytest.fixture

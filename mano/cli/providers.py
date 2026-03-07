@@ -22,7 +22,7 @@ def provider_login(
     provider: str = typer.Argument(..., help="OAuth provider (e.g. 'openai-codex', 'github-copilot')"),
 ):
     """Authenticate with an OAuth provider."""
-    from nanobot.providers.registry import PROVIDERS
+    from agent.providers.registry import PROVIDERS
 
     key = provider.replace("-", "_")
     spec = next((s for s in PROVIDERS if s.name == key and s.is_oauth), None)

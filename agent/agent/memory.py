@@ -8,11 +8,11 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from nanobot.utils.helpers import ensure_dir
+from agent.utils.helpers import ensure_dir
 
 if TYPE_CHECKING:
-    from nanobot.providers.base import LLMProvider
-    from nanobot.session.manager import Session
+    from agent.providers.base import LLMProvider
+    from agent.session.manager import Session
 
 
 _SAVE_MEMORY_TOOL = [

@@ -22,9 +22,9 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 if TYPE_CHECKING:
-    from nanobot.config.schema import AgentBindingConfig
+    from agent.config.schema import AgentBindingConfig
 
-from manobot.agents.scope import normalize_agent_id
+from mano.agents.scope import normalize_agent_id
 
 
 class RouteTier(IntEnum):

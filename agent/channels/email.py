@@ -16,10 +16,10 @@ from typing import Any
 
 from loguru import logger
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.base import BaseChannel
-from nanobot.config.schema import EmailConfig
+from agent.bus.events import OutboundMessage
+from agent.bus.queue import MessageBus
+from agent.channels.base import BaseChannel
+from agent.config.schema import EmailConfig
 
 
 class EmailChannel(BaseChannel):

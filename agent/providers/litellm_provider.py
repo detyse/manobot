@@ -9,8 +9,8 @@ import json_repair
 import litellm
 from litellm import acompletion
 
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
-from nanobot.providers.registry import find_by_model, find_gateway
+from agent.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from agent.providers.registry import find_by_model, find_gateway
 
 # Standard chat-completion message keys.
 _ALLOWED_MSG_KEYS = frozenset({"role", "content", "tool_calls", "tool_call_id", "name", "reasoning_content"})

@@ -6,10 +6,10 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.base import BaseChannel
-from nanobot.config.schema import QQConfig
+from agent.bus.events import OutboundMessage
+from agent.bus.queue import MessageBus
+from agent.channels.base import BaseChannel
+from agent.config.schema import QQConfig
 
 try:
     import botpy

@@ -3,10 +3,10 @@ from datetime import date
 
 import pytest
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.email import EmailChannel
-from nanobot.config.schema import EmailConfig
+from agent.bus.events import OutboundMessage
+from agent.bus.queue import MessageBus
+from agent.channels.email import EmailChannel
+from agent.config.schema import EmailConfig
 
 
 @pytest.fixture

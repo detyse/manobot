@@ -12,24 +12,24 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from loguru import logger
 
-from nanobot.agent.context import ContextBuilder
-from nanobot.agent.memory import MemoryStore
-from nanobot.agent.subagent import SubagentManager
-from nanobot.agent.tools.cron import CronTool
-from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
-from nanobot.agent.tools.message import MessageTool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.tools.spawn import SpawnTool
-from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
-from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.providers.base import LLMProvider
-from nanobot.session.manager import Session, SessionManager
+from agent.agent.context import ContextBuilder
+from agent.agent.memory import MemoryStore
+from agent.agent.subagent import SubagentManager
+from agent.agent.tools.cron import CronTool
+from agent.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from agent.agent.tools.message import MessageTool
+from agent.agent.tools.registry import ToolRegistry
+from agent.agent.tools.shell import ExecTool
+from agent.agent.tools.spawn import SpawnTool
+from agent.agent.tools.web import WebFetchTool, WebSearchTool
+from agent.bus.events import InboundMessage, OutboundMessage
+from agent.bus.queue import MessageBus
+from agent.providers.base import LLMProvider
+from agent.session.manager import Session, SessionManager
 
 if TYPE_CHECKING:
-    from nanobot.config.schema import ChannelsConfig, ExecToolConfig
-    from nanobot.cron.service import CronService
+    from agent.config.schema import ChannelsConfig, ExecToolConfig
+    from agent.cron.service import CronService
 
 
 class AgentLoop:
@@ -67,7 +67,7 @@ class AgentLoop:
         channels_config: ChannelsConfig | None = None,
         memory_store: MemoryStore | None = None,
     ):
-        from nanobot.config.schema import ExecToolConfig
+        from agent.config.schema import ExecToolConfig
         self.bus = bus
         self.channels_config = channels_config
         self.provider = provider
@@ -137,7 +137,7 @@ class AgentLoop:
         if self._mcp_connected or self._mcp_connecting or not self._mcp_servers:
             return
         self._mcp_connecting = True
-        from nanobot.agent.tools.mcp import connect_mcp_servers
+        from agent.agent.tools.mcp import connect_mcp_servers
         try:
             self._mcp_stack = AsyncExitStack()
             await self._mcp_stack.__aenter__()

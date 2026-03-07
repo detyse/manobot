@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
-    from nanobot.config.schema import IdentityConfig, SubagentsConfig
+    from agent.config.schema import IdentityConfig, SubagentsConfig
 
 
 class AgentScope(BaseModel):

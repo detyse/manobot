@@ -36,10 +36,10 @@ except ImportError as e:
         "Matrix dependencies not installed. Run: pip install nanobot-ai[matrix]"
     ) from e
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.channels.base import BaseChannel
-from nanobot.config.loader import get_data_dir
-from nanobot.utils.helpers import safe_filename
+from agent.bus.events import OutboundMessage
+from agent.channels.base import BaseChannel
+from agent.config.loader import get_data_dir
+from agent.utils.helpers import safe_filename
 
 TYPING_NOTICE_TIMEOUT_MS = 30_000
 # Must stay below TYPING_NOTICE_TIMEOUT_MS so the indicator doesn't expire mid-processing.

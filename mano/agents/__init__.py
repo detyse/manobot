@@ -1,14 +1,14 @@
 """Multi-agent management module."""
 
-from manobot.agents.init import (
+from mano.agents.init import (
     ensure_default_agent,
     initialize_manobot,
     migrate_nanobot_config,
     setup_agent_directories,
 )
-from manobot.agents.pool import AgentPool
-from manobot.agents.registry import AgentRegistry
-from manobot.agents.scope import (
+from mano.agents.pool import AgentPool
+from mano.agents.registry import AgentRegistry
+from mano.agents.scope import (
     DEFAULT_AGENT_ID,
     build_agent_scope,
     build_all_scopes,
@@ -21,7 +21,7 @@ from manobot.agents.scope import (
     resolve_fallback_agent_id,
     resolve_session_agent_id,
 )
-from manobot.agents.scope_model import AgentScope
+from mano.agents.scope_model import AgentScope
 
 __all__ = [
     "AgentPool",

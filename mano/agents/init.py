@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from manobot.agents.scope import (
+from mano.agents.scope import (
     DEFAULT_AGENT_ID,
     list_agent_ids,
     normalize_agent_id,
@@ -21,7 +21,7 @@ from manobot.agents.scope import (
 )
 
 if TYPE_CHECKING:
-    from nanobot.config.schema import Config
+    from agent.config.schema import Config
 
 
 def get_manobot_state_dir() -> Path:
@@ -218,7 +218,7 @@ def initialize_manobot() -> dict:
 
     # Load and check config
     try:
-        from nanobot.config.loader import load_config
+        from agent.config.loader import load_config
         config = load_config()
 
         # Ensure default agent

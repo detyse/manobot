@@ -11,23 +11,23 @@ from typing import TYPE_CHECKING, Callable
 
 from loguru import logger
 
-from manobot.agents.registry import AgentStatus, get_registry
-from manobot.agents.scope import (
+from mano.agents.registry import AgentStatus, get_registry
+from mano.agents.scope import (
     build_agent_scope,
     list_agent_ids,
     normalize_agent_id,
     resolve_fallback_agent_id,
 )
-from manobot.agents.scope_model import AgentScope
+from mano.agents.scope_model import AgentScope
 
 if TYPE_CHECKING:
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.agent.memory import MemoryStore
-    from nanobot.bus.queue import MessageBus
-    from nanobot.config.schema import Config
-    from nanobot.cron.service import CronService
-    from nanobot.providers.base import LLMProvider
-    from nanobot.session.manager import SessionManager
+    from agent.agent.loop import AgentLoop
+    from agent.agent.memory import MemoryStore
+    from agent.bus.queue import MessageBus
+    from agent.config.schema import Config
+    from agent.cron.service import CronService
+    from agent.providers.base import LLMProvider
+    from agent.session.manager import SessionManager
 
 
 class AgentPool:
@@ -137,9 +137,9 @@ class AgentPool:
         Returns:
             New AgentLoop instance
         """
-        from nanobot.agent.loop import AgentLoop
-        from nanobot.agent.memory import MemoryStore
-        from nanobot.session.manager import SessionManager
+        from agent.agent.loop import AgentLoop
+        from agent.agent.memory import MemoryStore
+        from agent.session.manager import SessionManager
 
         # Build scope (single source of truth)
         scope = build_agent_scope(self.config, agent_id)

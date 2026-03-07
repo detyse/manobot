@@ -1,9 +1,9 @@
 """Tests for provider configuration and model detection."""
 
-from nanobot.config.schema import Config
-from nanobot.providers.litellm_provider import LiteLLMProvider
-from nanobot.providers.openai_codex_provider import _strip_model_prefix
-from nanobot.providers.registry import find_by_model
+from agent.config.schema import Config
+from agent.providers.litellm_provider import LiteLLMProvider
+from agent.providers.openai_codex_provider import _strip_model_prefix
+from agent.providers.registry import find_by_model
 
 
 def test_config_matches_github_copilot_codex_with_hyphen_prefix():

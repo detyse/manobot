@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 if TYPE_CHECKING:
-    from nanobot.config.schema import AccountEntryConfig, Config
+    from agent.config.schema import AccountEntryConfig, Config
 
 
 class AccountRegistry:
@@ -56,7 +56,7 @@ class AccountRegistry:
         creates a single "default" account using the token from the
         channel config.
         """
-        from nanobot.config.schema import AccountEntryConfig
+        from agent.config.schema import AccountEntryConfig
 
         channel_token_map = {
             "telegram": getattr(config.channels.telegram, "token", None),

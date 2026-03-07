@@ -17,7 +17,7 @@ channels_app = typer.Typer(help="Manage channels")
 @channels_app.command("status")
 def channels_status():
     """Show channel status and configuration."""
-    from nanobot.config.loader import load_config
+    from agent.config.loader import load_config
 
     config = load_config()
 
@@ -176,7 +176,7 @@ def _get_bridge_dir() -> Path:
 @channels_app.command("login")
 def channels_login():
     """Link device via QR code (WhatsApp bridge)."""
-    from nanobot.config.loader import load_config
+    from agent.config.loader import load_config
 
     config = load_config()
     bridge_dir = _get_bridge_dir()

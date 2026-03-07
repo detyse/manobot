@@ -8,14 +8,14 @@ from typing import Any
 
 from loguru import logger
 
-from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
-from nanobot.bus.events import InboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import ExecToolConfig
-from nanobot.providers.base import LLMProvider
+from agent.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from agent.agent.tools.registry import ToolRegistry
+from agent.agent.tools.shell import ExecTool
+from agent.agent.tools.web import WebFetchTool, WebSearchTool
+from agent.bus.events import InboundMessage
+from agent.bus.queue import MessageBus
+from agent.config.schema import ExecToolConfig
+from agent.providers.base import LLMProvider
 
 
 class SubagentManager:
@@ -35,7 +35,7 @@ class SubagentManager:
         exec_config: "ExecToolConfig | None" = None,
         restrict_to_workspace: bool = False,
     ):
-        from nanobot.config.schema import ExecToolConfig
+        from agent.config.schema import ExecToolConfig
         self.provider = provider
         self.workspace = workspace
         self.bus = bus
@@ -211,8 +211,8 @@ Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not men
     
     def _build_subagent_prompt(self) -> str:
         """Build a focused system prompt for the subagent."""
-        from nanobot.agent.context import ContextBuilder
-        from nanobot.agent.skills import SkillsLoader
+        from agent.agent.context import ContextBuilder
+        from agent.agent.skills import SkillsLoader
 
         time_ctx = ContextBuilder._build_runtime_context(None, None)
         parts = [f"""# Subagent

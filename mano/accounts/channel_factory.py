@@ -11,11 +11,11 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 if TYPE_CHECKING:
-    from nanobot.bus.queue import MessageBus
-    from nanobot.channels.base import BaseChannel
-    from nanobot.config.schema import Config
+    from agent.bus.queue import MessageBus
+    from agent.channels.base import BaseChannel
+    from agent.config.schema import Config
 
-    from manobot.accounts.registry import AccountRegistry
+    from mano.accounts.registry import AccountRegistry
 
 
 # Mapping of channel names to (module_path, class_name, config_attr)

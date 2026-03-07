@@ -12,10 +12,10 @@ from urllib.parse import unquote, urlparse
 import httpx
 from loguru import logger
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.base import BaseChannel
-from nanobot.config.schema import DingTalkConfig
+from agent.bus.events import OutboundMessage
+from agent.bus.queue import MessageBus
+from agent.channels.base import BaseChannel
+from agent.config.schema import DingTalkConfig
 
 try:
     from dingtalk_stream import (
