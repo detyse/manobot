@@ -1,8 +1,6 @@
-"""
-Entry point for running nanobot as a module: python -m nanobot
-"""
+"""nanobot CLI has been merged into manobot. Use 'manobot' command instead."""
 
-from nanobot.cli.commands import app
+import sys
 
-if __name__ == "__main__":
-    app()
+print("nanobot CLI has been merged into manobot. Use 'manobot' instead.", file=sys.stderr)
+sys.exit(1)

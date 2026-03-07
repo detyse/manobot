@@ -4,9 +4,20 @@ Extends nanobot CLI with multi-agent management capabilities.
 """
 
 import asyncio
+import os
+import select
+import signal
+import sys
+from pathlib import Path
 
 import typer
+from prompt_toolkit import PromptSession
+from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.patch_stdout import patch_stdout
 from rich.console import Console
+from rich.markdown import Markdown
+from rich.text import Text
 
 from manobot import __version__
 from manobot.cli.agents import agents_app
@@ -37,6 +48,108 @@ For more help: https://github.com/HKUDS/nanobot
 
 # Add agents subcommand
 app.add_typer(agents_app, name="agents")
+
+# Register channels and provider subcommands
+from manobot.cli.channels import channels_app
+from manobot.cli.providers import provider_app
+
+app.add_typer(channels_app, name="channels")
+app.add_typer(provider_app, name="provider")
+
+# ---------------------------------------------------------------------------
+# CLI input: prompt_toolkit for editing, paste, history, and display
+# ---------------------------------------------------------------------------
+
+EXIT_COMMANDS = {"exit", "quit", "/exit", "/quit", ":q"}
+_PROMPT_SESSION: PromptSession | None = None
+_SAVED_TERM_ATTRS = None  # original termios settings, restored on exit
+
+
+def _flush_pending_tty_input() -> None:
+    """Drop unread keypresses typed while the model was generating output."""
+    try:
+        fd = sys.stdin.fileno()
+        if not os.isatty(fd):
+            return
+    except Exception:
+        return
+
+    try:
+        import termios
+        termios.tcflush(fd, termios.TCIFLUSH)
+        return
+    except Exception:
+        pass
+
+    try:
+        while True:
+            ready, _, _ = select.select([fd], [], [], 0)
+            if not ready:
+                break
+            if not os.read(fd, 4096):
+                break
+    except Exception:
+        return
+
+
+def _restore_terminal() -> None:
+    """Restore terminal to its original state (echo, line buffering, etc.)."""
+    if _SAVED_TERM_ATTRS is None:
+        return
+    try:
+        import termios
+        termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, _SAVED_TERM_ATTRS)
+    except Exception:
+        pass
+
+
+def _init_prompt_session() -> None:
+    """Create the prompt_toolkit session with persistent file history."""
+    global _PROMPT_SESSION, _SAVED_TERM_ATTRS
+
+    # Save terminal state so we can restore it on exit
+    try:
+        import termios
+        _SAVED_TERM_ATTRS = termios.tcgetattr(sys.stdin.fileno())
+    except Exception:
+        pass
+
+    history_file = Path.home() / ".manobot" / "history" / "cli_history"
+    history_file.parent.mkdir(parents=True, exist_ok=True)
+
+    _PROMPT_SESSION = PromptSession(
+        history=FileHistory(str(history_file)),
+        enable_open_in_editor=False,
+        multiline=False,   # Enter submits (single line mode)
+    )
+
+
+def _print_agent_response(response: str, render_markdown: bool, agent_id: str = "manobot") -> None:
+    """Render assistant response with consistent terminal styling."""
+    content = response or ""
+    body = Markdown(content) if render_markdown else Text(content)
+    console.print()
+    console.print(f"[cyan]🤖 {agent_id}[/cyan]")
+    console.print(body)
+    console.print()
+
+
+def _is_exit_command(command: str) -> bool:
+    """Return True when input should end interactive chat."""
+    return command.lower() in EXIT_COMMANDS
+
+
+async def _read_interactive_input_async() -> str:
+    """Read user input using prompt_toolkit (handles paste, history, display)."""
+    if _PROMPT_SESSION is None:
+        raise RuntimeError("Call _init_prompt_session() first")
+    try:
+        with patch_stdout():
+            return await _PROMPT_SESSION.prompt_async(
+                HTML("<b fg='ansiblue'>You:</b> "),
+            )
+    except EOFError as exc:
+        raise KeyboardInterrupt from exc
 
 
 def _make_provider_for_model(config, model: str | None = None, provider_override: str | None = None):
@@ -637,6 +750,208 @@ def gateway(
             await channels.stop_all()
 
     asyncio.run(run())
+
+
+@app.command("agent")
+def agent_chat(
+    message: str = typer.Option(None, "--message", "-m", help="Message to send to the agent"),
+    agent_id: str = typer.Option(None, "--agent", "-a", help="Agent ID to talk to (default: fallback agent)"),
+    session_id: str = typer.Option("cli:direct", "--session", "-s", help="Session ID"),
+    markdown: bool = typer.Option(True, "--markdown/--no-markdown", help="Render assistant output as Markdown"),
+    logs: bool = typer.Option(False, "--logs/--no-logs", help="Show runtime logs during chat"),
+):
+    """Interact with an agent directly.
+
+    In single-message mode (-m), sends one message and prints the response.
+    Without -m, starts an interactive REPL session.
+
+    Examples:
+        manobot agent -m "What is 2+2?"
+        manobot agent --agent coder -m "Write a hello world"
+        manobot agent                          # interactive mode
+        manobot agent --agent coder            # interactive with specific agent
+    """
+    from loguru import logger
+
+    from manobot.agents.init import ensure_default_agent, initialize_manobot
+    from manobot.agents.pool import AgentPool
+    from manobot.agents.scope import (
+        build_agent_scope,
+        list_agent_ids,
+        resolve_fallback_agent_id,
+    )
+    from nanobot.bus.events import InboundMessage
+    from nanobot.bus.queue import MessageBus
+    from nanobot.config.loader import get_data_dir, load_config
+    from nanobot.cron.service import CronService
+    from nanobot.utils.helpers import sync_workspace_templates
+
+    if logs:
+        logger.enable("nanobot")
+        logger.enable("manobot")
+    else:
+        logger.disable("nanobot")
+
+    # Auto-initialize
+    initialize_manobot()
+    config = load_config()
+    ensure_default_agent(config)
+    config = load_config()
+
+    # Resolve target agent
+    fallback_id = resolve_fallback_agent_id(config)
+    target_id = agent_id or fallback_id
+
+    configured = list_agent_ids(config)
+    if target_id not in configured:
+        console.print(f"[red]Agent '{target_id}' not found[/red]")
+        console.print(f"Available agents: {', '.join(configured)}")
+        raise typer.Exit(1)
+
+    scope = build_agent_scope(config, target_id)
+    if not scope:
+        console.print(f"[red]Cannot resolve scope for agent '{target_id}'[/red]")
+        raise typer.Exit(1)
+
+    sync_workspace_templates(scope.workspace)
+
+    # Create runtime components
+    bus = MessageBus()
+    cron_store_path = get_data_dir() / "cron" / "jobs.json"
+    cron = CronService(cron_store_path)
+
+    def provider_factory(model=None, provider_override=None):
+        return _make_provider_for_model(config, model, provider_override=provider_override)
+
+    pool = AgentPool(config, bus, provider_factory, cron_service=cron)
+
+    # Build session key
+    session_key = f"agent:{target_id}:default:cli:direct"
+    if ":" in session_id:
+        cli_channel, cli_chat_id = session_id.split(":", 1)
+        session_key = f"agent:{target_id}:default:{cli_channel}:{cli_chat_id}"
+    else:
+        cli_channel, cli_chat_id = "cli", session_id
+
+    # Spinner context
+    def _thinking_ctx():
+        if logs:
+            from contextlib import nullcontext
+            return nullcontext()
+        return console.status(f"[dim]{scope.name or target_id} is thinking...[/dim]", spinner="dots")
+
+    async def _cli_progress(content: str, *, tool_hint: bool = False) -> None:
+        ch = config.channels
+        if ch and tool_hint and not ch.send_tool_hints:
+            return
+        if ch and not tool_hint and not ch.send_progress:
+            return
+        console.print(f"  [dim]↳ {content}[/dim]")
+
+    if message:
+        # Single-message mode
+        async def run_once():
+            agent_loop = await pool.get_or_create_agent(target_id)
+            with _thinking_ctx():
+                response = await agent_loop.process_direct(
+                    message, session_key, on_progress=_cli_progress,
+                )
+            _print_agent_response(response, render_markdown=markdown, agent_id=scope.name or target_id)
+            await pool.stop_all()
+
+        asyncio.run(run_once())
+    else:
+        # Interactive REPL mode
+        _init_prompt_session()
+        display_name = scope.name or target_id
+        console.print(f"🤖 Interactive mode with [bold]{display_name}[/bold] "
+                       f"(type [bold]exit[/bold] or [bold]Ctrl+C[/bold] to quit)\n")
+
+        def _exit_on_sigint(signum, frame):
+            _restore_terminal()
+            console.print("\nGoodbye!")
+            os._exit(0)
+
+        signal.signal(signal.SIGINT, _exit_on_sigint)
+
+        async def run_interactive():
+            agent_loop = await pool.get_or_create_agent(target_id)
+            bus_task = asyncio.create_task(agent_loop.run())
+            turn_done = asyncio.Event()
+            turn_done.set()
+            turn_response: list[str] = []
+
+            async def _consume_outbound():
+                while True:
+                    try:
+                        msg = await asyncio.wait_for(bus.consume_outbound(), timeout=1.0)
+                        if msg.metadata.get("_progress"):
+                            is_tool_hint = msg.metadata.get("_tool_hint", False)
+                            ch = config.channels
+                            if ch and is_tool_hint and not ch.send_tool_hints:
+                                pass
+                            elif ch and not is_tool_hint and not ch.send_progress:
+                                pass
+                            else:
+                                console.print(f"  [dim]↳ {msg.content}[/dim]")
+                        elif not turn_done.is_set():
+                            if msg.content:
+                                turn_response.append(msg.content)
+                            turn_done.set()
+                        elif msg.content:
+                            console.print()
+                            _print_agent_response(msg.content, render_markdown=markdown, agent_id=display_name)
+                    except asyncio.TimeoutError:
+                        continue
+                    except asyncio.CancelledError:
+                        break
+
+            outbound_task = asyncio.create_task(_consume_outbound())
+
+            try:
+                while True:
+                    try:
+                        _flush_pending_tty_input()
+                        user_input = await _read_interactive_input_async()
+                        command = user_input.strip()
+                        if not command:
+                            continue
+
+                        if _is_exit_command(command):
+                            _restore_terminal()
+                            console.print("\nGoodbye!")
+                            break
+
+                        turn_done.clear()
+                        turn_response.clear()
+
+                        await bus.publish_inbound(InboundMessage(
+                            channel=cli_channel,
+                            sender_id="user",
+                            chat_id=cli_chat_id,
+                            content=user_input,
+                        ))
+
+                        with _thinking_ctx():
+                            await turn_done.wait()
+
+                        if turn_response:
+                            _print_agent_response(turn_response[0], render_markdown=markdown, agent_id=display_name)
+                    except KeyboardInterrupt:
+                        _restore_terminal()
+                        console.print("\nGoodbye!")
+                        break
+                    except EOFError:
+                        _restore_terminal()
+                        console.print("\nGoodbye!")
+                        break
+            finally:
+                agent_loop.stop()
+                outbound_task.cancel()
+                await asyncio.gather(bus_task, outbound_task, return_exceptions=True)
+                await pool.stop_all()
+
+        asyncio.run(run_interactive())
 
 
 @app.command()
