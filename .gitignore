@@ -23,3 +23,5 @@ tests/
 uv.lock
 .qoder/
 .ruff_cache/
+
+nanobot/

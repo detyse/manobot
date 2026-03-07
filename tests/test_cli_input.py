@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from prompt_toolkit.formatted_text import HTML
 
-from manobot.cli import main as cli_main
+from mano.cli import main as cli_main
 
 
 @pytest.fixture
