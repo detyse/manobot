@@ -19,16 +19,18 @@ class BaseChannel(ABC):
 
     name: str = "base"
 
-    def __init__(self, config: Any, bus: MessageBus):
+    def __init__(self, config: Any, bus: MessageBus, account_id: str = "default"):
         """
         Initialize the channel.
 
         Args:
             config: Channel-specific configuration.
             bus: The message bus for communication.
+            account_id: Channel account identifier (for multi-account support).
         """
         self.config = config
         self.bus = bus
+        self.account_id = account_id
         self._running = False
 
     @abstractmethod
@@ -109,6 +111,7 @@ class BaseChannel(ABC):
             media=media or [],
             metadata=metadata or {},
             session_key_override=session_key,
+            account_id=self.account_id,
         )
 
         await self.bus.publish_inbound(msg)

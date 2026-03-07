@@ -17,6 +17,7 @@ from manobot.agents.scope import (
     list_agent_ids,
     normalize_agent_id,
     resolve_default_agent_id,
+    resolve_fallback_agent_id,
 )
 
 if TYPE_CHECKING:

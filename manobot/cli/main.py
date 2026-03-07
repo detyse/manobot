@@ -182,7 +182,7 @@ def status():
     from manobot.agents.init import initialize_manobot
     from manobot.agents.scope import (
         list_agent_ids,
-        resolve_default_agent_id,
+        resolve_fallback_agent_id,
     )
     from nanobot.config.loader import load_config
 
@@ -191,7 +191,7 @@ def status():
 
     config = load_config()
     agent_ids = list_agent_ids(config)
-    default_id = resolve_default_agent_id(config)
+    default_id = resolve_fallback_agent_id(config)
 
     console.print("\n[bold]🤖 Manobot Status[/bold]\n")
     console.print(f"[cyan]Configured agents:[/cyan] {len(agent_ids)}")
@@ -230,18 +230,19 @@ def gateway(
     """
     from loguru import logger
 
+    from manobot.accounts.registry import AccountRegistry
     from manobot.agents.init import ensure_default_agent, initialize_manobot
     from manobot.agents.pool import AgentPool
     from manobot.agents.scope import (
-        build_session_key,
         list_agent_ids,
         normalize_agent_id,
-        resolve_default_agent_id,
+        resolve_fallback_agent_id,
     )
     from manobot.bindings.router import MessageRouter
+    from manobot.channels.multi_manager import MultiAccountChannelManager
+    from manobot.sessions.ownership import PeerFingerprint, SessionOwnershipStore
     from nanobot.bus.events import InboundMessage, OutboundMessage
     from nanobot.bus.queue import MessageBus
-    from nanobot.channels.manager import ChannelManager
     from nanobot.config.loader import get_data_dir, load_config
     from nanobot.cron.service import CronService
     from nanobot.cron.types import CronJob
@@ -275,7 +276,7 @@ def gateway(
     sync_workspace_templates(config.workspace_path)
 
     agent_ids = list_agent_ids(config)
-    default_id = resolve_default_agent_id(config)
+    default_id = resolve_fallback_agent_id(config)
 
     console.print(f"[green]✓[/green] Loaded {len(agent_ids)} agent(s), default: {default_id}")
 
@@ -319,9 +320,11 @@ def gateway(
     # Create core multi-agent components
     pool = AgentPool(config, bus, provider_factory, cron_service=cron)
     router = MessageRouter(config)
+    ownership_store = SessionOwnershipStore()
 
-    # Create channel manager
-    channels = ChannelManager(config, bus)
+    # Create account registry and multi-account channel manager
+    account_registry = AccountRegistry(config)
+    channels = MultiAccountChannelManager(config, bus, account_registry)
 
     if channels.enabled_channels:
         console.print(f"[green]✓[/green] Channels enabled: {', '.join(channels.enabled_channels)}")
@@ -456,15 +459,19 @@ def gateway(
 
     # Message dispatch function
     async def dispatch_inbound(msg: InboundMessage) -> None:
-        """Route and process an inbound message."""
-        # Determine target agent
+        """Route and process an inbound message.
+
+        Pipeline:
+        1. Extract InboundContext -> route decision
+        2. Build PeerFingerprint -> session ownership
+        3. Get/create agent -> process message
+        """
+        # 1. Route decision
         if single_agent_mode:
             target_agent_id = agent
         else:
-            # Extract peer_type from metadata
             peer_type = msg.metadata.get("peer_type")
             if peer_type is None and msg.metadata.get("is_group") is not None:
-                # Normalize is_group to peer_type for legacy channels
                 peer_type = "group" if msg.metadata.get("is_group") else "direct"
 
             route = router.route(
@@ -474,23 +481,39 @@ def gateway(
                 peer_type=peer_type,
                 guild_id=msg.metadata.get("guild_id"),
                 team_id=msg.metadata.get("team_id"),
+                account_id=msg.account_id,
+                parent_peer_id=msg.metadata.get("parent_peer_id"),
             )
             target_agent_id = route.agent_id
 
             if route.binding_index is not None:
                 logger.debug(
-                    "Routed {}/{} -> agent '{}' (binding #{})",
-                    msg.channel, msg.chat_id, target_agent_id, route.binding_index
+                    "Routed {}/{} -> agent '{}' (tier={}, binding #{})",
+                    msg.channel, msg.chat_id, target_agent_id,
+                    route.tier.name, route.binding_index,
                 )
 
-        # Get or create agent
-        agent_loop = await pool.get_or_create_agent(target_agent_id)
-
-        # Respect channel-provided session_key_override (e.g. Slack thread isolation)
+        # 2. Session ownership
         if msg.session_key_override:
-            session_key = f"{normalize_agent_id(target_agent_id)}:{msg.session_key_override}"
+            # Respect channel-provided session_key_override (e.g. Slack thread)
+            fingerprint = PeerFingerprint(
+                channel=msg.channel,
+                account_id=msg.account_id,
+                peer_id=msg.chat_id,
+                thread_id=msg.session_key_override,
+            )
         else:
-            session_key = build_session_key(target_agent_id, msg.channel, msg.chat_id)
+            fingerprint = PeerFingerprint(
+                channel=msg.channel,
+                account_id=msg.account_id,
+                peer_id=msg.chat_id,
+            )
+
+        ownership = ownership_store.resolve(target_agent_id, fingerprint)
+        session_key = ownership.session_key
+
+        # 3. Get or create agent
+        agent_loop = await pool.get_or_create_agent(target_agent_id)
 
         # Handle /stop: cancel the tracked task for this session, then respond
         if msg.content.strip().lower() == "/stop":

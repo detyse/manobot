@@ -1,7 +1,7 @@
 """Configuration schema using Pydantic."""
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -238,6 +238,9 @@ class AgentEntryConfig(Base):
     default: bool = False  # Whether this is the default agent
     name: str | None = None  # Display name
     workspace: str | None = None  # Agent-specific workspace (overrides defaults)
+    agent_dir: str | None = None  # Agent data root directory (overrides ~/.manobot/agents/{id}/)
+    sessions_dir: str | None = None  # Agent sessions directory (overrides agent_dir/sessions/)
+    memory_dir: str | None = None  # Agent memory directory (overrides agent_dir/memory/)
     model: str | None = None  # Agent-specific model (overrides defaults)
     provider: str | None = None  # Agent-specific provider (overrides defaults)
     max_tokens: int | None = None  # Agent-specific max tokens
@@ -254,6 +257,7 @@ class AgentBindingMatch(Base):
     account_id: str | None = None  # Specific account ID
     peer_type: Literal["direct", "group", "channel"] | None = None  # Chat type
     peer_id: str | None = None  # Specific peer/chat ID
+    parent_peer_id: str | None = None  # Parent peer ID (e.g. Discord thread parent channel)
     guild_id: str | None = None  # Discord guild ID
     team_id: str | None = None  # Slack team ID
 
@@ -261,6 +265,7 @@ class AgentBindingMatch(Base):
 class AgentBindingConfig(Base):
     """Binding configuration to route messages to specific agents."""
 
+    id: str | None = None  # Optional binding identifier (for diagnostics)
     agent_id: str  # Target agent ID
     comment: str | None = None  # Optional description
     match: AgentBindingMatch  # Matching criteria
@@ -270,8 +275,17 @@ class AgentsConfig(Base):
     """Agent configuration with multi-agent support."""
 
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
+    fallback: str | None = None  # Explicit fallback agent ID (overrides default=True lookup)
     agent_list: list[AgentEntryConfig] = Field(default_factory=list, alias="list")  # Multi-agent definitions
     bindings: list[AgentBindingConfig] = Field(default_factory=list)  # Channel-to-agent bindings
+
+
+class AccountEntryConfig(Base):
+    """Configuration for a single channel account."""
+
+    token: str | None = None  # Direct token value
+    token_env: str | None = None  # Environment variable name for token
+    extra: dict[str, Any] = Field(default_factory=dict)  # Platform-specific overrides
 
 
 class ProviderConfig(Base):
@@ -364,6 +378,7 @@ class Config(BaseSettings):
     """Root configuration for nanobot."""
 
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
+    accounts: dict[str, dict[str, AccountEntryConfig]] = Field(default_factory=dict)  # Multi-account: { channel: { account_id: config } }
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
