@@ -1,29 +1,49 @@
 # Manobot
 
-Multi-agent management layer built on top of [nanobot](https://github.com/HKUDS/nanobot).
+A multi-instance wrapper for [nanobot](https://github.com/HKUDS/nanobot).
 
-Manobot adds agent registry/configuration, routing rules, and operational tooling while reusing nanobot's core agent loop, channels, tools, and provider stack.
+Manobot manages multiple nanobot agent instances as isolated subprocesses. Each agent runs as an independent nanobot process with its own workspace, memory, sessions, and channel configuration. Manobot handles configuration generation, process lifecycle, health monitoring, and CLI interaction.
 
-## Project Status
+## How It Works
 
-- Agent management CLI is implemented (`manobot agents ...`).
-- Agent config/schema extensions are implemented in `nanobot/config/schema.py`.
-- Agent/binding resolution utilities are implemented in `manobot/agents/*` and `manobot/bindings/*`.
-- Multi-agent runtime routing in `manobot gateway` is wired: agent pool, message router, per-agent sessions/memory, and parallel dispatch are operational.
+```
+manobot gateway
+  |
+  +-- agent "assistant" (subprocess, port 18791)
+  |     nanobot agent loop + channels + HTTP API
+  |
+  +-- agent "coder" (subprocess, port 18792)
+  |     nanobot agent loop + channels + HTTP API
+  |
+  +-- health monitor (auto-restart on crash)
+```
+
+- `manobot gateway` acts as a supervisor: it spawns each configured agent as a separate `python -m mano.core.runner` process.
+- Each agent gets a generated nanobot-format config with its own channel configuration.
+- Agents expose an HTTP API (`/api/health`, `/api/chat`, `/api/stop`) on `127.0.0.1`.
+- The CLI communicates with running agents via HTTP, or can run an agent directly in-process with `--direct`.
 
 ## Repository Layout
 
 ```text
 manobot/
-├── nanobot/                  # Upstream nanobot core
-├── manobot/                  # Multi-agent management layer
-│   ├── agents/               # Agent scope, registry, pool, init/migration
-│   ├── bindings/             # Channel-to-agent routing logic
-│   └── cli/                  # manobot CLI commands
+├── nanobot/                  # Upstream nanobot core (synced from upstream)
+├── mano/                     # Multi-instance management layer
+│   ├── agents/               # Agent init/migration helpers
+│   ├── core/                 # Core infrastructure
+│   │   ├── state.py          # Process state persistence (~/.manobot/state/)
+│   │   ├── config_gen.py     # Per-agent config generator
+│   │   ├── runner.py         # Subprocess entry point (nanobot + HTTP API)
+│   │   ├── process_manager.py# Subprocess lifecycle management
+│   │   ├── health.py         # Health monitor with auto-restart
+│   │   └── scope.py          # Agent scope resolution
+│   └── cli/                  # CLI commands
+│       ├── main.py           # Top-level commands (gateway, agent, status)
+│       └── agents.py         # Agent management subcommands
 ├── bridge/                   # WhatsApp bridge (Node.js)
 ├── scripts/
 │   └── sync-upstream.sh      # Upstream sync helper
-└── tests/                    # Upstream nanobot tests
+└── tests/
 ```
 
 ## Requirements
@@ -45,11 +65,6 @@ uv sync --extra dev
 uv pip install -e .
 ```
 
-This repo installs two CLIs:
-
-- `nanobot` (upstream single-agent CLI)
-- `manobot` (multi-agent management CLI)
-
 ## Quick Start
 
 1. Initialize manobot (creates `~/.manobot` state and migrates config if needed):
@@ -68,10 +83,30 @@ manobot agents add coder --name "Code Assistant" --model deepseek/deepseek-coder
 manobot agents set-default coder
 ```
 
-4. Start gateway:
+4. Start the supervisor (launches all agents as subprocesses):
 
 ```bash
-manobot gateway --port 18790
+manobot gateway
+```
+
+5. Check status:
+
+```bash
+manobot status
+```
+
+6. Chat with a running agent:
+
+```bash
+# via HTTP to a running subprocess (requires gateway)
+manobot agent -m "Hello"
+manobot agent --agent coder -m "Write a hello world"
+
+# interactive mode
+manobot agent
+
+# in-process mode (no gateway needed)
+manobot agent --direct -m "Hello"
 ```
 
 ## Configuration
@@ -86,9 +121,7 @@ Minimal example:
     "defaults": {
       "workspace": "~/.manobot/workspace",
       "model": "anthropic/claude-opus-4-5",
-      "provider": "auto",
-      "maxTokens": 8192,
-      "temperature": 0.1
+      "maxTokens": 8192
     },
     "list": [
       {
@@ -100,16 +133,13 @@ Minimal example:
         "id": "coder",
         "name": "Code Assistant",
         "workspace": "~/projects",
-        "model": "deepseek/deepseek-coder"
-      }
-    ],
-    "bindings": [
-      {
-        "agentId": "coder",
-        "match": {
-          "channel": "telegram",
-          "peerType": "group",
-          "peerId": "-100123456789"
+        "model": "deepseek/deepseek-coder",
+        "channels": {
+          "telegram": {
+            "enabled": true,
+            "token": "CODER_BOT_TOKEN",
+            "allowFrom": []
+          }
         }
       }
     ]
@@ -122,41 +152,54 @@ Minimal example:
 }
 ```
 
-More complete example: `examples/multi-agent-config.json`.
+### Per-Agent Channels
+
+Each agent can have its own `channels` configuration with independent credentials:
+
+- If an agent has a `channels` field, it uses that config exclusively (its own bot tokens).
+- If an agent has no `channels` field, it inherits the global `channels` config.
+- Same-token multi-instance is not supported; each agent that needs a channel must use its own bot/token.
 
 ## Agent Isolation
 
-Per-agent state is stored under:
+Each agent subprocess has fully isolated:
 
-- `~/.manobot/agents/<agent_id>/memory/`
-- `~/.manobot/agents/<agent_id>/sessions/`
-- `~/.manobot/agents/<agent_id>/workspace/`
+- **Process**: Separate OS process with its own event loop
+- **Config**: Generated nanobot-format `config.json` under `~/.manobot/agents/<id>/`
+- **Memory**: `~/.manobot/agents/<id>/memory/`
+- **Sessions**: `~/.manobot/agents/<id>/sessions/`
+- **Workspace**: Configurable per-agent
+- **Channels**: Per-agent configuration or inherited from global
 
 ## CLI Reference
 
 ### Top-level
 
 ```bash
-manobot version
-manobot init
-manobot status
-manobot gateway --port 18790
-manobot sync
+manobot version                           # Show version info
+manobot init [--force]                    # Initialize manobot environment
+manobot status                            # Show supervisor and agent process status
+manobot gateway [--base-port 18791]       # Start supervisor (all agents)
+manobot gateway --agent coder             # Start single agent only
+manobot agent -m "message"                # Chat via HTTP (requires gateway)
+manobot agent --direct -m "message"       # Chat in-process (no gateway needed)
+manobot sync                              # Sync with upstream nanobot
 ```
 
 ### Agent management
 
 ```bash
 manobot agents list [--json]
-manobot agents show <agent_id> [--json]
-manobot agents add <agent_id> [--name ...] [--workspace ...] [--model ...] [--default]
-manobot agents delete <agent_id> [--force]
-manobot agents set-default <agent_id>
-manobot agents bindings [--json]
-manobot agents bind <agent_id> --channel <channel> [--peer-type ...] [--peer-id ...]
+manobot agents show <id> [--json]
+manobot agents add <id> [--name ...] [--workspace ...] [--model ...] [--default]
+manobot agents delete <id> [--force]
+manobot agents set-default <id>
+manobot agents start <id>                 # Start single agent subprocess
+manobot agents stop <id>                  # Stop agent subprocess
+manobot agents restart <id>               # Restart agent subprocess
 ```
 
-## Upstream Sync Workflow
+## Upstream Sync
 
 Recommended remotes:
 
@@ -172,13 +215,7 @@ bash scripts/sync-upstream.sh
 ## Test and Lint
 
 ```bash
-# run tests
 uv run --extra dev pytest
-
-# matrix tests require optional matrix dependencies
-uv run --extra dev pytest --ignore=tests/test_matrix_channel.py
-
-# lint
 uv run --extra dev ruff check .
 ```
 
@@ -186,7 +223,7 @@ uv run --extra dev ruff check .
 
 ```bash
 docker build -t manobot .
-docker run -d --name manobot-gateway -p 18790:18790 -v ~/.manobot:/root/.manobot manobot gateway
+docker run -d --name manobot -v ~/.manobot:/root/.manobot manobot gateway
 ```
 
 ## Known Limitations

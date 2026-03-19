@@ -1,6 +1,13 @@
 """Configuration module for nanobot."""
 
-from agent.config.loader import get_config_path, load_config
+from agent.config.loader import get_config_path, get_data_dir, load_config, save_config, set_config_path
 from agent.config.schema import Config
 
-__all__ = ["Config", "load_config", "get_config_path"]
+__all__ = [
+    "Config",
+    "get_config_path",
+    "get_data_dir",
+    "load_config",
+    "save_config",
+    "set_config_path",
+]

@@ -1,4 +1,4 @@
-"""Voice transcription provider using Groq."""
+﻿"""Voice transcription provider using Groq."""
 
 import os
 from pathlib import Path
@@ -62,3 +62,4 @@ class GroqTranscriptionProvider:
         except Exception as e:
             logger.error("Groq transcription error: {}", e)
             return ""
+

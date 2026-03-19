@@ -1,6 +1,6 @@
 """Auto-initialization for manobot.
 
-Ensures that when manobot starts, the default nanobot configuration
+Ensures that when manobot starts, the default configuration
 is automatically registered as the default agent.
 """
 
@@ -12,12 +12,11 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from mano.agents.scope import (
+from mano.core.scope import (
     DEFAULT_AGENT_ID,
     list_agent_ids,
     normalize_agent_id,
     resolve_default_agent_id,
-    resolve_fallback_agent_id,
 )
 
 if TYPE_CHECKING:
@@ -29,16 +28,17 @@ def get_manobot_state_dir() -> Path:
     return Path.home() / ".manobot"
 
 
-def get_nanobot_config_path() -> Path:
-    """Get the nanobot config file path."""
-    return Path.home() / ".nanobot" / "config.json"
+def _get_config_path() -> Path:
+    """Get the config file path (delegates to agent.config.loader)."""
+    from agent.config.loader import get_config_path
+    return get_config_path()
 
 
 def ensure_default_agent(config: Config) -> bool:
     """Ensure a default agent exists in the configuration.
 
     If no agents are configured, creates a default agent entry
-    based on the existing nanobot defaults configuration.
+    based on the existing defaults configuration.
 
     Args:
         config: Current application configuration
@@ -58,20 +58,20 @@ def ensure_default_agent(config: Config) -> bool:
         # Already has explicit agent list
         return True
 
-    logger.info("No agents configured, auto-creating default agent from nanobot config")
+    logger.info("No agents configured, auto-creating default agent")
 
-    # Create default agent entry from nanobot defaults
+    # Create default agent entry from defaults
     default_agent = {
-        "id": "nanobot",
+        "id": "assistant",
         "default": True,
-        "name": "Nanobot (Default)",
+        "name": "Assistant (Default)",
         "workspace": config.agents.defaults.workspace,
         "model": config.agents.defaults.model,
     }
 
     # Try to update config file
     try:
-        config_path = get_nanobot_config_path()
+        config_path = _get_config_path()
         if not config_path.exists():
             # Create config file with default agent on first run
             logger.info("Config file not found, creating new config at {}", config_path)
@@ -83,12 +83,11 @@ def ensure_default_agent(config: Config) -> bool:
                         "model": config.agents.defaults.model,
                     },
                     "list": [default_agent],
-                    "bindings": [],
                 }
             }
             with open(config_path, "w") as f:
                 json.dump(config_data, f, indent=2)
-            logger.info("Created new config with default agent 'nanobot'")
+            logger.info("Created new config with default agent 'assistant'")
             return True
 
         with open(config_path, "r") as f:
@@ -103,7 +102,7 @@ def ensure_default_agent(config: Config) -> bool:
 
         # Check if already has a default agent
         has_default = any(
-            a.get("default", False) or a.get("id") == "nanobot"
+            a.get("default", False)
             for a in config_data["agents"]["list"]
         )
 
@@ -113,7 +112,7 @@ def ensure_default_agent(config: Config) -> bool:
             with open(config_path, "w") as f:
                 json.dump(config_data, f, indent=2)
 
-            logger.info("Created default agent 'nanobot' from existing configuration")
+            logger.info("Created default agent 'assistant' from existing configuration")
 
         return True
 
@@ -122,8 +121,8 @@ def ensure_default_agent(config: Config) -> bool:
         return False
 
 
-def migrate_nanobot_config() -> str:
-    """Migrate existing nanobot configuration to manobot format.
+def migrate_config() -> str:
+    """Migrate existing configuration to manobot multi-agent format.
 
     Creates the manobot state directory and ensures the config
     is compatible with multi-agent setup.
@@ -131,22 +130,22 @@ def migrate_nanobot_config() -> str:
     Returns:
         "migrated" if actual migration was performed,
         "already" if config was already in multi-agent format,
-        "none" if no nanobot config exists,
+        "none" if no config exists,
         "error" on failure.
     """
-    nanobot_config = get_nanobot_config_path()
+    config_path = _get_config_path()
     manobot_state = get_manobot_state_dir()
 
     # Ensure manobot state directory exists
     manobot_state.mkdir(parents=True, exist_ok=True)
     (manobot_state / "agents").mkdir(exist_ok=True)
 
-    if not nanobot_config.exists():
-        logger.info("No existing nanobot config found")
+    if not config_path.exists():
+        logger.info("No existing config found")
         return "none"
 
     try:
-        with open(nanobot_config, "r") as f:
+        with open(config_path, "r") as f:
             config_data = json.load(f)
 
         # Check if already migrated
@@ -155,30 +154,22 @@ def migrate_nanobot_config() -> str:
             return "already"
 
         # Add default agent from existing config
-        defaults = config_data.get("agents", {}).get("defaults", {})
-
         default_agent = {
-            "id": "nanobot",
+            "id": "assistant",
             "default": True,
-            "name": "Nanobot (Migrated)",
+            "name": "Assistant (Migrated)",
         }
-
-        # Only add fields if they differ from defaults
-        if defaults.get("workspace"):
-            # Keep using defaults, don't duplicate
-            pass
 
         if "agents" not in config_data:
             config_data["agents"] = {}
 
         config_data["agents"]["list"] = [default_agent]
-        config_data["agents"]["bindings"] = []
 
         # Write updated config
-        with open(nanobot_config, "w") as f:
+        with open(config_path, "w") as f:
             json.dump(config_data, f, indent=2)
 
-        logger.info("Migrated nanobot config to multi-agent format")
+        logger.info("Migrated config to multi-agent format")
         return "migrated"
 
     except Exception as e:
@@ -197,7 +188,7 @@ def initialize_manobot() -> dict:
     result = {
         "success": True,
         "state_dir": str(get_manobot_state_dir()),
-        "config_path": str(get_nanobot_config_path()),
+        "config_path": str(_get_config_path()),
         "migrated": False,
         "default_agent": None,
         "errors": [],
@@ -209,7 +200,7 @@ def initialize_manobot() -> dict:
     (state_dir / "agents").mkdir(exist_ok=True)
 
     # Migrate config if needed
-    migration_result = migrate_nanobot_config()
+    migration_result = migrate_config()
     if migration_result == "error":
         result["errors"].append("Config migration failed")
         result["success"] = False

@@ -18,6 +18,14 @@
         "identity": {
           "name": "Nano",
           "description": "A helpful AI assistant for general tasks"
+        },
+        "channels": {
+          "sendProgress": true,
+          "telegram": {
+            "enabled": true,
+            "token": "YOUR_ASSISTANT_TELEGRAM_BOT_TOKEN",
+            "allowFrom": []
+          }
         }
       },
       {
@@ -33,6 +41,19 @@
         "subagents": {
           "allowAgents": ["reviewer"],
           "model": "deepseek/deepseek-chat"
+        },
+        "channels": {
+          "sendProgress": true,
+          "telegram": {
+            "enabled": true,
+            "token": "YOUR_CODER_TELEGRAM_BOT_TOKEN",
+            "allowFrom": []
+          },
+          "discord": {
+            "enabled": true,
+            "token": "YOUR_CODER_DISCORD_BOT_TOKEN",
+            "allowFrom": []
+          }
         }
       },
       {
@@ -43,56 +64,20 @@
         "identity": {
           "name": "Reviewer",
           "description": "Code review specialist"
-        }
-      }
-    ],
-    "bindings": [
-      {
-        "agentId": "coder",
-        "comment": "Route Telegram coding group to coder agent",
-        "match": {
-          "channel": "telegram",
-          "peerType": "group",
-          "peerId": "-100123456789"
-        }
-      },
-      {
-        "agentId": "coder",
-        "comment": "Route Discord dev server to coder agent",
-        "match": {
-          "channel": "discord",
-          "guildId": "987654321"
-        }
-      },
-      {
-        "agentId": "reviewer",
-        "comment": "Route code review channel to reviewer",
-        "match": {
-          "channel": "slack",
-          "peerType": "channel",
-          "peerId": "C0123456789"
+        },
+        "channels": {
+          "slack": {
+            "enabled": true,
+            "botToken": "xoxb-REVIEWER-BOT-TOKEN",
+            "appToken": "xapp-REVIEWER-APP-TOKEN"
+          }
         }
       }
     ]
   },
   "channels": {
     "sendProgress": true,
-    "sendToolHints": false,
-    "telegram": {
-      "enabled": true,
-      "token": "YOUR_TELEGRAM_BOT_TOKEN",
-      "allowFrom": []
-    },
-    "discord": {
-      "enabled": false,
-      "token": "YOUR_DISCORD_BOT_TOKEN",
-      "allowFrom": []
-    },
-    "slack": {
-      "enabled": false,
-      "botToken": "xoxb-...",
-      "appToken": "xapp-..."
-    }
+    "sendToolHints": false
   },
   "providers": {
     "anthropic": {

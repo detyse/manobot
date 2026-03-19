@@ -1,4 +1,4 @@
-"""Skills loader for agent capabilities."""
+﻿"""Skills loader for agent capabilities."""
 
 import json
 import os
@@ -226,3 +226,4 @@ class SkillsLoader:
                 return metadata
 
         return None
+

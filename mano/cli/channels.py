@@ -133,7 +133,7 @@ def _get_bridge_dir() -> Path:
         raise typer.Exit(1)
 
     # Find source bridge: check package data, then source dir
-    pkg_bridge = Path(__file__).parent.parent.parent / "nanobot" / "bridge"
+    pkg_bridge = Path(__file__).parent.parent.parent / "agent" / "bridge"
     src_bridge = Path(__file__).parent.parent.parent / "bridge"
 
     source = None
@@ -144,7 +144,7 @@ def _get_bridge_dir() -> Path:
 
     if not source:
         console.print("[red]Bridge source not found.[/red]")
-        console.print("Try reinstalling: pip install --force-reinstall nanobot-ai")
+        console.print("Try reinstalling: pip install --force-reinstall manobot")
         raise typer.Exit(1)
 
     console.print("🤖 Setting up bridge...")

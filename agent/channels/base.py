@@ -1,6 +1,9 @@
-"""Base channel interface for chat platforms."""
+﻿"""Base channel interface for chat platforms."""
+
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -18,20 +21,33 @@ class BaseChannel(ABC):
     """
 
     name: str = "base"
+    display_name: str = "Base"
+    transcription_api_key: str = ""
 
-    def __init__(self, config: Any, bus: MessageBus, account_id: str = "default"):
+    def __init__(self, config: Any, bus: MessageBus):
         """
         Initialize the channel.
 
         Args:
             config: Channel-specific configuration.
             bus: The message bus for communication.
-            account_id: Channel account identifier (for multi-account support).
         """
         self.config = config
         self.bus = bus
-        self.account_id = account_id
         self._running = False
+
+    async def transcribe_audio(self, file_path: str | Path) -> str:
+        """Transcribe an audio file via Groq Whisper. Returns empty string on failure."""
+        if not self.transcription_api_key:
+            return ""
+        try:
+            from agent.providers.transcription import GroqTranscriptionProvider
+
+            provider = GroqTranscriptionProvider(api_key=self.transcription_api_key)
+            return await provider.transcribe(file_path)
+        except Exception as e:
+            logger.warning("{}: audio transcription failed: {}", self.name, e)
+            return ""
 
     @abstractmethod
     async def start(self) -> None:
@@ -61,17 +77,14 @@ class BaseChannel(ABC):
         pass
 
     def is_allowed(self, sender_id: str) -> bool:
-        """Check if *sender_id* is permitted.  Empty list → deny all; ``"*"`` → allow all."""
+        """Check if *sender_id* is permitted.  Empty list â†’ deny all; ``"*"`` â†’ allow all."""
         allow_list = getattr(self.config, "allow_from", [])
         if not allow_list:
-            logger.warning("{}: allow_from is empty — all access denied", self.name)
+            logger.warning("{}: allow_from is empty â€” all access denied", self.name)
             return False
         if "*" in allow_list:
             return True
-        sender_str = str(sender_id)
-        return sender_str in allow_list or any(
-            p in allow_list for p in sender_str.split("|") if p
-        )
+        return str(sender_id) in allow_list
 
     async def _handle_message(
         self,
@@ -111,12 +124,17 @@ class BaseChannel(ABC):
             media=media or [],
             metadata=metadata or {},
             session_key_override=session_key,
-            account_id=self.account_id,
         )
 
         await self.bus.publish_inbound(msg)
+
+    @classmethod
+    def default_config(cls) -> dict[str, Any]:
+        """Return default config for onboard. Override in plugins to auto-populate config.json."""
+        return {"enabled": False}
 
     @property
     def is_running(self) -> bool:
         """Check if the channel is running."""
         return self._running
+

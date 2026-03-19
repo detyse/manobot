@@ -1,4 +1,4 @@
-"""Email channel implementation using IMAP polling + SMTP replies."""
+﻿"""Email channel implementation using IMAP polling + SMTP replies."""
 
 import asyncio
 import html
@@ -15,26 +15,57 @@ from email.utils import parseaddr
 from typing import Any
 
 from loguru import logger
+from pydantic import Field
 
 from agent.bus.events import OutboundMessage
 from agent.bus.queue import MessageBus
 from agent.channels.base import BaseChannel
-from agent.config.schema import EmailConfig
+from agent.config.schema import Base
+
+
+class EmailConfig(Base):
+    """Email channel configuration (IMAP inbound + SMTP outbound)."""
+
+    enabled: bool = False
+    consent_granted: bool = False
+
+    imap_host: str = ""
+    imap_port: int = 993
+    imap_username: str = ""
+    imap_password: str = ""
+    imap_mailbox: str = "INBOX"
+    imap_use_ssl: bool = True
+
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_use_tls: bool = True
+    smtp_use_ssl: bool = False
+    from_address: str = ""
+
+    auto_reply_enabled: bool = True
+    poll_interval_seconds: int = 30
+    mark_seen: bool = True
+    max_body_chars: int = 12000
+    subject_prefix: str = "Re: "
+    allow_from: list[str] = Field(default_factory=list)
 
 
 class EmailChannel(BaseChannel):
     """
     Email channel.
-    
+
     Inbound:
     - Poll IMAP mailbox for unread messages.
     - Convert each message into an inbound event.
-    
+
     Outbound:
     - Send responses via SMTP back to the sender address.
     """
 
     name = "email"
+    display_name = "Email"
     _IMAP_MONTHS = (
         "Jan",
         "Feb",
@@ -50,7 +81,13 @@ class EmailChannel(BaseChannel):
         "Dec",
     )
 
-    def __init__(self, config: EmailConfig, bus: MessageBus):
+    @classmethod
+    def default_config(cls) -> dict[str, Any]:
+        return EmailConfig().model_dump(by_alias=True)
+
+    def __init__(self, config: Any, bus: MessageBus):
+        if isinstance(config, dict):
+            config = EmailConfig.model_validate(config)
         super().__init__(config, bus)
         self.config: EmailConfig = config
         self._last_subject_by_chat: dict[str, str] = {}
@@ -86,7 +123,7 @@ class EmailChannel(BaseChannel):
                         self._last_subject_by_chat[sender] = subject
                     if message_id:
                         self._last_message_id_by_chat[sender] = message_id
-                    
+
                     await self._handle_message(
                         sender_id=sender,
                         chat_id=sender,
@@ -95,7 +132,7 @@ class EmailChannel(BaseChannel):
                     )
             except Exception as e:
                 logger.error("Email polling error: {}", e)
-            
+
             await asyncio.sleep(poll_seconds)
 
     async def stop(self) -> None:
@@ -120,7 +157,7 @@ class EmailChannel(BaseChannel):
         # Determine if this is a reply (recipient has sent us an email before)
         is_reply = to_addr in self._last_subject_by_chat
         force_send = bool((msg.metadata or {}).get("force_send"))
-        
+
         # autoReplyEnabled only controls automatic replies, not proactive sends
         if is_reply and not self.config.auto_reply_enabled and not force_send:
             logger.info("Skip automatic email reply to {}: auto_reply_enabled is false", to_addr)
@@ -293,7 +330,6 @@ class EmailChannel(BaseChannel):
                     "date": date_value,
                     "sender_email": sender,
                     "uid": uid,
-                    "peer_type": "direct",  # Email is always point-to-point
                 }
                 messages.append(
                     {
@@ -407,3 +443,4 @@ class EmailChannel(BaseChannel):
         if subject.lower().startswith("re:"):
             return subject
         return f"{prefix}{subject}"
+

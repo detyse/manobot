@@ -17,8 +17,6 @@ manobot/
 │   │   ├── scope.py          # Agent scope resolution
 │   │   ├── registry.py       # Agent registry
 │   │   └── pool.py           # Agent pool manager
-│   ├── bindings/             # Message routing
-│   │   └── router.py         # Channel-to-agent routing
 │   └── cli/                  # Extended CLI commands
 │       ├── agents.py         # Agent management commands
 │       └── main.py           # Main CLI entry point
@@ -189,16 +187,13 @@ fi
         "id": "coder",
         "name": "Code Assistant",
         "workspace": "~/projects",
-        "model": "deepseek/deepseek-coder"
-      }
-    ],
-    "bindings": [
-      {
-        "agentId": "coder",
-        "match": {
-          "channel": "telegram",
-          "peerType": "group",
-          "peerId": "-100123456789"
+        "model": "deepseek/deepseek-coder",
+        "channels": {
+          "telegram": {
+            "enabled": true,
+            "token": "CODER_BOT_TOKEN",
+            "allowFrom": []
+          }
         }
       }
     ]
@@ -286,12 +281,6 @@ manobot agents delete <agent_id>
 
 # Set default agent
 manobot agents set-default <agent_id>
-
-# List bindings
-manobot agents bindings
-
-# Add binding
-manobot agents bind <agent_id> --channel telegram --peer-id -100123456789
 
 # Start gateway
 manobot gateway --port 18790
