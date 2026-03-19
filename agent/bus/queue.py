@@ -1,4 +1,4 @@
-"""Async message queue for decoupled channel-agent communication."""
+﻿"""Async message queue for decoupled channel-agent communication."""
 
 import asyncio
 
@@ -42,3 +42,4 @@ class MessageBus:
     def outbound_size(self) -> int:
         """Number of pending outbound messages."""
         return self.outbound.qsize()
+

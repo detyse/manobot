@@ -1,4 +1,4 @@
-"""Spawn tool for creating background subagents."""
+﻿"""Spawn tool for creating background subagents."""
 
 from typing import TYPE_CHECKING, Any
 
@@ -61,3 +61,4 @@ class SpawnTool(Tool):
             origin_chat_id=self._origin_chat_id,
             session_key=self._session_key,
         )
+

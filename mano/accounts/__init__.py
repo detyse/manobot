@@ -1,1 +1,0 @@
-"""Channel accounts management module."""

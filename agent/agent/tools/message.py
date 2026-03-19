@@ -1,4 +1,4 @@
-"""Message tool for sending messages to users."""
+﻿"""Message tool for sending messages to users."""
 
 from typing import Any, Awaitable, Callable
 
@@ -96,7 +96,7 @@ class MessageTool(Tool):
             media=media or [],
             metadata={
                 "message_id": message_id,
-            }
+            },
         )
 
         try:
@@ -107,3 +107,4 @@ class MessageTool(Tool):
             return f"Message sent to {channel}:{chat_id}{media_info}"
         except Exception as e:
             return f"Error sending message: {str(e)}"
+

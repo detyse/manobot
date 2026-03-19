@@ -54,6 +54,16 @@ class DingTalkConfig(Base):
     allow_from: list[str] = Field(default_factory=list)  # Allowed staff_ids
 
 
+class WecomConfig(Base):
+    """WeCom (Enterprise WeChat) AI Bot channel configuration."""
+
+    enabled: bool = False
+    bot_id: str = ""
+    secret: str = ""
+    allow_from: list[str] = Field(default_factory=list)
+    welcome_message: str = ""
+
+
 class DiscordConfig(Base):
     """Discord channel configuration."""
 
@@ -189,6 +199,12 @@ class QQConfig(Base):
 class ChannelsConfig(Base):
     """Configuration for chat channels."""
 
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="allow",
+    )
+
     send_progress: bool = True    # stream agent's text progress to the channel
     send_tool_hints: bool = False  # stream tool-call hints (e.g. read_file("…"))
     whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
@@ -197,6 +213,7 @@ class ChannelsConfig(Base):
     feishu: FeishuConfig = Field(default_factory=FeishuConfig)
     mochat: MochatConfig = Field(default_factory=MochatConfig)
     dingtalk: DingTalkConfig = Field(default_factory=DingTalkConfig)
+    wecom: WecomConfig = Field(default_factory=WecomConfig)
     email: EmailConfig = Field(default_factory=EmailConfig)
     slack: SlackConfig = Field(default_factory=SlackConfig)
     qq: QQConfig = Field(default_factory=QQConfig)
@@ -210,10 +227,16 @@ class AgentDefaults(Base):
     model: str = "anthropic/claude-opus-4-5"
     provider: str = "auto"  # Provider name (e.g. "anthropic", "openrouter") or "auto" for auto-detection
     max_tokens: int = 8192
+    context_window_tokens: int = 65_536
     temperature: float = 0.1
     max_tool_iterations: int = 40
-    memory_window: int = 100
+    memory_window: int | None = Field(default=None, exclude=True)
     reasoning_effort: str | None = None  # low / medium / high — enables LLM thinking mode
+
+    @property
+    def should_warn_deprecated_memory_window(self) -> bool:
+        """Return True when old memoryWindow is present without contextWindowTokens."""
+        return self.memory_window is not None and "context_window_tokens" not in self.model_fields_set
 
 
 class IdentityConfig(Base):
@@ -244,48 +267,23 @@ class AgentEntryConfig(Base):
     model: str | None = None  # Agent-specific model (overrides defaults)
     provider: str | None = None  # Agent-specific provider (overrides defaults)
     max_tokens: int | None = None  # Agent-specific max tokens
+    context_window_tokens: int | None = None  # Agent-specific context window tokens
     temperature: float | None = None  # Agent-specific temperature
+    max_tool_iterations: int | None = None  # Agent-specific max tool iterations
+    reasoning_effort: str | None = None  # Agent-specific reasoning effort
     skills: list[str] | None = None  # Allowed skills for this agent (None = all, [] = none)
     identity: IdentityConfig | None = None  # Agent identity config
     subagents: SubagentsConfig | None = None  # Subagent spawning config
-
-
-class AgentBindingMatch(Base):
-    """Matching criteria for agent bindings."""
-
-    channel: str  # Channel name (telegram, discord, feishu, etc.)
-    account_id: str | None = None  # Specific account ID
-    peer_type: Literal["direct", "group", "channel"] | None = None  # Chat type
-    peer_id: str | None = None  # Specific peer/chat ID
-    parent_peer_id: str | None = None  # Parent peer ID (e.g. Discord thread parent channel)
-    guild_id: str | None = None  # Discord guild ID
-    team_id: str | None = None  # Slack team ID
-
-
-class AgentBindingConfig(Base):
-    """Binding configuration to route messages to specific agents."""
-
-    id: str | None = None  # Optional binding identifier (for diagnostics)
-    agent_id: str  # Target agent ID
-    comment: str | None = None  # Optional description
-    match: AgentBindingMatch  # Matching criteria
+    channels: ChannelsConfig | None = None  # Per-agent channel config (None = inherit global)
+    providers: "ProvidersConfig | None" = None  # Per-agent provider config (None = inherit global)
 
 
 class AgentsConfig(Base):
     """Agent configuration with multi-agent support."""
 
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
-    fallback: str | None = None  # Explicit fallback agent ID (overrides default=True lookup)
     agent_list: list[AgentEntryConfig] = Field(default_factory=list, alias="list")  # Multi-agent definitions
-    bindings: list[AgentBindingConfig] = Field(default_factory=list)  # Channel-to-agent bindings
 
-
-class AccountEntryConfig(Base):
-    """Configuration for a single channel account."""
-
-    token: str | None = None  # Direct token value
-    token_env: str | None = None  # Environment variable name for token
-    extra: dict[str, Any] = Field(default_factory=dict)  # Platform-specific overrides
 
 
 class ProviderConfig(Base):
@@ -300,6 +298,7 @@ class ProvidersConfig(Base):
     """Configuration for LLM providers."""
 
     custom: ProviderConfig = Field(default_factory=ProviderConfig)  # Any OpenAI-compatible endpoint
+    azure_openai: ProviderConfig = Field(default_factory=ProviderConfig)  # Azure OpenAI (model = deployment name)
     anthropic: ProviderConfig = Field(default_factory=ProviderConfig)
     openai: ProviderConfig = Field(default_factory=ProviderConfig)
     openrouter: ProviderConfig = Field(default_factory=ProviderConfig)
@@ -308,12 +307,16 @@ class ProvidersConfig(Base):
     zhipu: ProviderConfig = Field(default_factory=ProviderConfig)
     dashscope: ProviderConfig = Field(default_factory=ProviderConfig)  # 阿里云通义千问
     vllm: ProviderConfig = Field(default_factory=ProviderConfig)
+    ollama: ProviderConfig = Field(default_factory=ProviderConfig)  # Ollama local models
     gemini: ProviderConfig = Field(default_factory=ProviderConfig)
     moonshot: ProviderConfig = Field(default_factory=ProviderConfig)
     minimax: ProviderConfig = Field(default_factory=ProviderConfig)
     aihubmix: ProviderConfig = Field(default_factory=ProviderConfig)  # AiHubMix API gateway
     siliconflow: ProviderConfig = Field(default_factory=ProviderConfig)  # SiliconFlow (硅基流动) API gateway
     volcengine: ProviderConfig = Field(default_factory=ProviderConfig)  # VolcEngine (火山引擎) API gateway
+    volcengine_coding_plan: ProviderConfig = Field(default_factory=ProviderConfig)  # VolcEngine Coding Plan
+    byteplus: ProviderConfig = Field(default_factory=ProviderConfig)  # BytePlus (VolcEngine international)
+    byteplus_coding_plan: ProviderConfig = Field(default_factory=ProviderConfig)  # BytePlus Coding Plan
     openai_codex: ProviderConfig = Field(default_factory=ProviderConfig)  # OpenAI Codex (OAuth)
     github_copilot: ProviderConfig = Field(default_factory=ProviderConfig)  # Github Copilot (OAuth)
 
@@ -336,7 +339,9 @@ class GatewayConfig(Base):
 class WebSearchConfig(Base):
     """Web search tool configuration."""
 
-    api_key: str = ""  # Brave Search API key
+    provider: str = "brave"  # brave, tavily, duckduckgo, searxng, jina
+    api_key: str = ""
+    base_url: str = ""  # SearXNG base URL
     max_results: int = 5
 
 
@@ -357,12 +362,16 @@ class ExecToolConfig(Base):
 class MCPServerConfig(Base):
     """MCP server connection configuration (stdio or HTTP)."""
 
+    type: Literal["stdio", "sse", "streamableHttp"] | None = None  # auto-detected if omitted
     command: str = ""  # Stdio: command to run (e.g. "npx")
     args: list[str] = Field(default_factory=list)  # Stdio: command arguments
     env: dict[str, str] = Field(default_factory=dict)  # Stdio: extra env vars
-    url: str = ""  # HTTP: streamable HTTP endpoint URL
-    headers: dict[str, str] = Field(default_factory=dict)  # HTTP: Custom HTTP Headers
-    tool_timeout: int = 30  # Seconds before a tool call is cancelled
+    url: str = ""  # HTTP/SSE: endpoint URL
+    headers: dict[str, str] = Field(default_factory=dict)  # HTTP/SSE: custom headers
+    tool_timeout: int = 30  # seconds before a tool call is cancelled
+    enabled_tools: list[str] = Field(
+        default_factory=lambda: ["*"]
+    )  # accepts raw MCP names or wrapped mcp_<server>_<tool> names
 
 
 class ToolsConfig(Base):
@@ -378,7 +387,6 @@ class Config(BaseSettings):
     """Root configuration for nanobot."""
 
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
-    accounts: dict[str, dict[str, AccountEntryConfig]] = Field(default_factory=dict)  # Multi-account: { channel: { account_id: config } }
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
@@ -411,15 +419,31 @@ class Config(BaseSettings):
         for spec in PROVIDERS:
             p = getattr(self.providers, spec.name, None)
             if p and model_prefix and normalized_prefix == spec.name:
-                if spec.is_oauth or p.api_key:
+                if spec.is_oauth or spec.is_local or p.api_key:
                     return p, spec.name
 
         # Match by keyword (order follows PROVIDERS registry)
         for spec in PROVIDERS:
             p = getattr(self.providers, spec.name, None)
             if p and any(_kw_matches(kw) for kw in spec.keywords):
-                if spec.is_oauth or p.api_key:
+                if spec.is_oauth or spec.is_local or p.api_key:
                     return p, spec.name
+
+        # Fallback: configured local providers can route models without
+        # provider-specific keywords (for example plain "llama3.2" on Ollama).
+        local_fallback: tuple[ProviderConfig, str] | None = None
+        for spec in PROVIDERS:
+            if not spec.is_local:
+                continue
+            p = getattr(self.providers, spec.name, None)
+            if not (p and p.api_base):
+                continue
+            if spec.detect_by_base_keyword and spec.detect_by_base_keyword in p.api_base:
+                return p, spec.name
+            if local_fallback is None:
+                local_fallback = (p, spec.name)
+        if local_fallback:
+            return local_fallback
 
         # Fallback: gateways first, then others (follows registry order)
         # OAuth providers are NOT valid fallbacks — they require explicit model selection
@@ -447,7 +471,7 @@ class Config(BaseSettings):
         return p.api_key if p else None
 
     def get_api_base(self, model: str | None = None) -> str | None:
-        """Get API base URL for the given model. Applies default URLs for known gateways."""
+        """Get API base URL for the given model. Applies default URLs for gateways/local providers."""
         from agent.providers.registry import find_by_name
 
         p, name = self._match_provider(model)
@@ -458,7 +482,7 @@ class Config(BaseSettings):
         # to avoid polluting the global litellm.api_base.
         if name:
             spec = find_by_name(name)
-            if spec and spec.is_gateway and spec.default_api_base:
+            if spec and (spec.is_gateway or spec.is_local) and spec.default_api_base:
                 return spec.default_api_base
         return None
 

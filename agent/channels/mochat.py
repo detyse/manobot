@@ -1,4 +1,4 @@
-"""Mochat channel implementation using Socket.IO with HTTP polling fallback."""
+﻿"""Mochat channel implementation using Socket.IO with HTTP polling fallback."""
 
 from __future__ import annotations
 
@@ -15,8 +15,9 @@ from loguru import logger
 from agent.bus.events import OutboundMessage
 from agent.bus.queue import MessageBus
 from agent.channels.base import BaseChannel
-from agent.config.schema import MochatConfig
-from agent.utils.helpers import get_data_path
+from agent.config.paths import get_runtime_subdir
+from agent.config.schema import Base
+from pydantic import Field
 
 try:
     import socketio
@@ -209,6 +210,49 @@ def parse_timestamp(value: Any) -> int | None:
 
 
 # ---------------------------------------------------------------------------
+# Config classes
+# ---------------------------------------------------------------------------
+
+class MochatMentionConfig(Base):
+    """Mochat mention behavior configuration."""
+
+    require_in_groups: bool = False
+
+
+class MochatGroupRule(Base):
+    """Mochat per-group mention requirement."""
+
+    require_mention: bool = False
+
+
+class MochatConfig(Base):
+    """Mochat channel configuration."""
+
+    enabled: bool = False
+    base_url: str = "https://mochat.io"
+    socket_url: str = ""
+    socket_path: str = "/socket.io"
+    socket_disable_msgpack: bool = False
+    socket_reconnect_delay_ms: int = 1000
+    socket_max_reconnect_delay_ms: int = 10000
+    socket_connect_timeout_ms: int = 10000
+    refresh_interval_ms: int = 30000
+    watch_timeout_ms: int = 25000
+    watch_limit: int = 100
+    retry_delay_ms: int = 500
+    max_retry_attempts: int = 0
+    claw_token: str = ""
+    agent_user_id: str = ""
+    sessions: list[str] = Field(default_factory=list)
+    panels: list[str] = Field(default_factory=list)
+    allow_from: list[str] = Field(default_factory=list)
+    mention: MochatMentionConfig = Field(default_factory=MochatMentionConfig)
+    groups: dict[str, MochatGroupRule] = Field(default_factory=dict)
+    reply_delay_mode: str = "non-mention"
+    reply_delay_ms: int = 120000
+
+
+# ---------------------------------------------------------------------------
 # Channel
 # ---------------------------------------------------------------------------
 
@@ -216,15 +260,22 @@ class MochatChannel(BaseChannel):
     """Mochat channel using socket.io with fallback polling workers."""
 
     name = "mochat"
+    display_name = "Mochat"
 
-    def __init__(self, config: MochatConfig, bus: MessageBus):
+    @classmethod
+    def default_config(cls) -> dict[str, Any]:
+        return MochatConfig().model_dump(by_alias=True)
+
+    def __init__(self, config: Any, bus: MessageBus):
+        if isinstance(config, dict):
+            config = MochatConfig.model_validate(config)
         super().__init__(config, bus)
         self.config: MochatConfig = config
         self._http: httpx.AsyncClient | None = None
         self._socket: Any = None
         self._ws_connected = self._ws_ready = False
 
-        self._state_dir = get_data_path() / "mochat"
+        self._state_dir = get_runtime_subdir("mochat")
         self._cursor_path = self._state_dir / "session_cursors.json"
         self._session_cursor: dict[str, int] = {}
         self._cursor_save_task: asyncio.Task | None = None
@@ -759,7 +810,6 @@ class MochatChannel(BaseChannel):
                 "sender_name": last.sender_name, "sender_username": last.sender_username,
                 "target_kind": target_kind, "was_mentioned": was_mentioned,
                 "buffered_count": len(entries),
-                "peer_type": "group" if is_group else "direct",
             },
         )
 
@@ -894,3 +944,4 @@ class MochatChannel(BaseChannel):
             return None
         value = metadata.get("group_id") or metadata.get("groupId")
         return value.strip() if isinstance(value, str) and value.strip() else None
+

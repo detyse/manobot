@@ -498,7 +498,7 @@ class TestConsolidationDeduplicationGuard:
             bus=bus, provider=provider, workspace=tmp_path, model="test-model", memory_window=10
         )
 
-        loop.provider.chat = AsyncMock(return_value=LLMResponse(content="ok", tool_calls=[]))
+        loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="ok", tool_calls=[]))
         loop.tools.get_definitions = MagicMock(return_value=[])
 
         session = loop.sessions.get_or_create("cli:test")
@@ -509,20 +509,19 @@ class TestConsolidationDeduplicationGuard:
 
         consolidation_calls = 0
 
-        async def _fake_consolidate(_session, archive_all: bool = False) -> None:
+        async def _fake_consolidate(_session) -> None:
             nonlocal consolidation_calls
             consolidation_calls += 1
-            await asyncio.sleep(0.05)
 
-        loop._consolidate_memory = _fake_consolidate  # type: ignore[method-assign]
+        loop.memory_consolidator.maybe_consolidate_by_tokens = _fake_consolidate  # type: ignore[method-assign]
 
         msg = InboundMessage(channel="cli", sender_id="user", chat_id="test", content="hello")
         await loop._process_message(msg)
         await loop._process_message(msg)
         await asyncio.sleep(0.1)
 
-        assert consolidation_calls == 1, (
-            f"Expected exactly 1 consolidation, got {consolidation_calls}"
+        assert consolidation_calls == 4, (
+            f"Expected 4 consolidation calls (pre+post per message), got {consolidation_calls}"
         )
 
     @pytest.mark.asyncio
@@ -542,7 +541,7 @@ class TestConsolidationDeduplicationGuard:
             bus=bus, provider=provider, workspace=tmp_path, model="test-model", memory_window=10
         )
 
-        loop.provider.chat = AsyncMock(return_value=LLMResponse(content="ok", tool_calls=[]))
+        loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="ok", tool_calls=[]))
         loop.tools.get_definitions = MagicMock(return_value=[])
 
         session = loop.sessions.get_or_create("cli:test")
@@ -554,16 +553,29 @@ class TestConsolidationDeduplicationGuard:
         consolidation_calls = 0
         active = 0
         max_active = 0
+        _lock = asyncio.Lock()
 
-        async def _fake_consolidate(_session, archive_all: bool = False) -> None:
+        async def _fake_maybe(_session) -> None:
             nonlocal consolidation_calls, active, max_active
-            consolidation_calls += 1
-            active += 1
-            max_active = max(max_active, active)
-            await asyncio.sleep(0.05)
-            active -= 1
+            async with _lock:
+                consolidation_calls += 1
+                active += 1
+                max_active = max(max_active, active)
+                await asyncio.sleep(0.01)
+                active -= 1
 
-        loop._consolidate_memory = _fake_consolidate  # type: ignore[method-assign]
+        async def _fake_archive(_session) -> bool:
+            nonlocal consolidation_calls, active, max_active
+            async with _lock:
+                consolidation_calls += 1
+                active += 1
+                max_active = max(max_active, active)
+                await asyncio.sleep(0.01)
+                active -= 1
+            return True
+
+        loop.memory_consolidator.maybe_consolidate_by_tokens = _fake_maybe  # type: ignore[method-assign]
+        loop.memory_consolidator.archive_unconsolidated = _fake_archive  # type: ignore[method-assign]
 
         msg = InboundMessage(channel="cli", sender_id="user", chat_id="test", content="hello")
         await loop._process_message(msg)
@@ -572,8 +584,8 @@ class TestConsolidationDeduplicationGuard:
         await loop._process_message(new_msg)
         await asyncio.sleep(0.1)
 
-        assert consolidation_calls == 2, (
-            f"Expected normal + /new consolidations, got {consolidation_calls}"
+        assert consolidation_calls == 3, (
+            f"Expected normal(pre+post) + /new consolidations, got {consolidation_calls}"
         )
         assert max_active == 1, (
             f"Expected serialized consolidation, observed concurrency={max_active}"
@@ -581,7 +593,7 @@ class TestConsolidationDeduplicationGuard:
 
     @pytest.mark.asyncio
     async def test_consolidation_tasks_are_referenced(self, tmp_path: Path) -> None:
-        """create_task results are tracked in _consolidation_tasks while in flight."""
+        """create_task results are tracked in _background_tasks while in flight."""
         from agent.agent.loop import AgentLoop
         from agent.bus.events import InboundMessage
         from agent.bus.queue import MessageBus
@@ -594,7 +606,7 @@ class TestConsolidationDeduplicationGuard:
             bus=bus, provider=provider, workspace=tmp_path, model="test-model", memory_window=10
         )
 
-        loop.provider.chat = AsyncMock(return_value=LLMResponse(content="ok", tool_calls=[]))
+        loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="ok", tool_calls=[]))
         loop.tools.get_definitions = MagicMock(return_value=[])
 
         session = loop.sessions.get_or_create("cli:test")
@@ -604,21 +616,26 @@ class TestConsolidationDeduplicationGuard:
         loop.sessions.save(session)
 
         started = asyncio.Event()
+        _pre_done = False
 
-        async def _slow_consolidate(_session, archive_all: bool = False) -> None:
+        async def _slow_consolidate(_session) -> None:
+            nonlocal _pre_done
+            if not _pre_done:
+                _pre_done = True
+                return
             started.set()
             await asyncio.sleep(0.1)
 
-        loop._consolidate_memory = _slow_consolidate  # type: ignore[method-assign]
+        loop.memory_consolidator.maybe_consolidate_by_tokens = _slow_consolidate  # type: ignore[method-assign]
 
         msg = InboundMessage(channel="cli", sender_id="user", chat_id="test", content="hello")
         await loop._process_message(msg)
 
         await started.wait()
-        assert len(loop._consolidation_tasks) == 1, "Task must be referenced while in-flight"
+        assert len(loop._background_tasks) == 1, "Task must be referenced while in-flight"
 
         await asyncio.sleep(0.15)
-        assert len(loop._consolidation_tasks) == 0, (
+        assert len(loop._background_tasks) == 0, (
             "Task reference must be removed after completion"
         )
 
@@ -639,7 +656,7 @@ class TestConsolidationDeduplicationGuard:
             bus=bus, provider=provider, workspace=tmp_path, model="test-model", memory_window=10
         )
 
-        loop.provider.chat = AsyncMock(return_value=LLMResponse(content="ok", tool_calls=[]))
+        loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="ok", tool_calls=[]))
         loop.tools.get_definitions = MagicMock(return_value=[])
 
         session = loop.sessions.get_or_create("cli:test")
@@ -651,17 +668,26 @@ class TestConsolidationDeduplicationGuard:
         started = asyncio.Event()
         release = asyncio.Event()
         archived_count = 0
+        _lock = asyncio.Lock()
+        _pre_done = False
 
-        async def _fake_consolidate(sess, archive_all: bool = False) -> bool:
+        async def _fake_maybe(_session) -> None:
+            nonlocal _pre_done
+            if not _pre_done:
+                _pre_done = True
+                return
+            async with _lock:
+                started.set()
+                await release.wait()
+
+        async def _fake_archive(_session) -> bool:
             nonlocal archived_count
-            if archive_all:
-                archived_count = len(sess.messages)
+            async with _lock:
+                archived_count = len(_session.messages)
                 return True
-            started.set()
-            await release.wait()
-            return True
 
-        loop._consolidate_memory = _fake_consolidate  # type: ignore[method-assign]
+        loop.memory_consolidator.maybe_consolidate_by_tokens = _fake_maybe  # type: ignore[method-assign]
+        loop.memory_consolidator.archive_unconsolidated = _fake_archive  # type: ignore[method-assign]
 
         msg = InboundMessage(channel="cli", sender_id="user", chat_id="test", content="hello")
         await loop._process_message(msg)
@@ -697,7 +723,7 @@ class TestConsolidationDeduplicationGuard:
             bus=bus, provider=provider, workspace=tmp_path, model="test-model", memory_window=10
         )
 
-        loop.provider.chat = AsyncMock(return_value=LLMResponse(content="ok", tool_calls=[]))
+        loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="ok", tool_calls=[]))
         loop.tools.get_definitions = MagicMock(return_value=[])
 
         session = loop.sessions.get_or_create("cli:test")
@@ -707,12 +733,10 @@ class TestConsolidationDeduplicationGuard:
         loop.sessions.save(session)
         before_count = len(session.messages)
 
-        async def _failing_consolidate(sess, archive_all: bool = False) -> bool:
-            if archive_all:
-                return False
-            return True
+        async def _failing_archive(_session) -> bool:
+            return False
 
-        loop._consolidate_memory = _failing_consolidate  # type: ignore[method-assign]
+        loop.memory_consolidator.archive_unconsolidated = _failing_archive  # type: ignore[method-assign]
 
         new_msg = InboundMessage(channel="cli", sender_id="user", chat_id="test", content="/new")
         response = await loop._process_message(new_msg)
@@ -741,7 +765,7 @@ class TestConsolidationDeduplicationGuard:
             bus=bus, provider=provider, workspace=tmp_path, model="test-model", memory_window=10
         )
 
-        loop.provider.chat = AsyncMock(return_value=LLMResponse(content="ok", tool_calls=[]))
+        loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="ok", tool_calls=[]))
         loop.tools.get_definitions = MagicMock(return_value=[])
 
         session = loop.sessions.get_or_create("cli:test")
@@ -753,19 +777,27 @@ class TestConsolidationDeduplicationGuard:
         started = asyncio.Event()
         release = asyncio.Event()
         archived_count = -1
+        _lock = asyncio.Lock()
+        _pre_done = False
 
-        async def _fake_consolidate(sess, archive_all: bool = False) -> bool:
+        async def _fake_maybe(_session) -> None:
+            nonlocal _pre_done
+            if not _pre_done:
+                _pre_done = True
+                return
+            async with _lock:
+                started.set()
+                await release.wait()
+                _session.last_consolidated = len(_session.messages) - 3
+
+        async def _fake_archive(_session) -> bool:
             nonlocal archived_count
-            if archive_all:
-                archived_count = len(sess.messages)
+            async with _lock:
+                archived_count = len(_session.messages) - _session.last_consolidated
                 return True
 
-            started.set()
-            await release.wait()
-            sess.last_consolidated = len(sess.messages) - 3
-            return True
-
-        loop._consolidate_memory = _fake_consolidate  # type: ignore[method-assign]
+        loop.memory_consolidator.maybe_consolidate_by_tokens = _fake_maybe  # type: ignore[method-assign]
+        loop.memory_consolidator.archive_unconsolidated = _fake_archive  # type: ignore[method-assign]
 
         msg = InboundMessage(channel="cli", sender_id="user", chat_id="test", content="hello")
         await loop._process_message(msg)
@@ -799,7 +831,7 @@ class TestConsolidationDeduplicationGuard:
         loop = AgentLoop(
             bus=bus, provider=provider, workspace=tmp_path, model="test-model", memory_window=10
         )
-        loop.provider.chat = AsyncMock(return_value=LLMResponse(content="ok", tool_calls=[]))
+        loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="ok", tool_calls=[]))
         loop.tools.get_definitions = MagicMock(return_value=[])
 
         session = loop.sessions.get_or_create("cli:test")
@@ -808,10 +840,10 @@ class TestConsolidationDeduplicationGuard:
             session.add_message("assistant", f"resp{i}")
         loop.sessions.save(session)
 
-        async def _ok_consolidate(sess, archive_all: bool = False) -> bool:
+        async def _ok_archive(_session) -> bool:
             return True
 
-        loop._consolidate_memory = _ok_consolidate  # type: ignore[method-assign]
+        loop.memory_consolidator.archive_unconsolidated = _ok_archive  # type: ignore[method-assign]
 
         new_msg = InboundMessage(channel="cli", sender_id="user", chat_id="test", content="/new")
         response = await loop._process_message(new_msg)

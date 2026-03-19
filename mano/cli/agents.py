@@ -12,18 +12,12 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from mano.agents.scope import (
+from mano.core.scope import (
+    build_agent_scope,
     list_agent_ids,
     normalize_agent_id,
-    resolve_agent_config,
-    resolve_agent_memory_dir,
-    resolve_agent_sessions_dir,
-    resolve_agent_workspace,
     resolve_default_agent_id,
 )
-
-# Valid peer_type values matching the schema
-VALID_PEER_TYPES = {"direct", "group", "channel"}
 
 console = Console()
 agents_app = typer.Typer(
@@ -37,7 +31,6 @@ Common workflows:
   • manobot agents list              # View all agents
   • manobot agents add coder --name "Code Assistant"   # Add new agent
   • manobot agents show coder        # View agent details
-  • manobot agents bind coder --channel telegram --peer-id -100123   # Bind channel
   • manobot agents set-default coder # Set default agent
 """,
     no_args_is_help=True,
@@ -46,7 +39,7 @@ Common workflows:
 
 
 def _load_config():
-    """Load configuration from nanobot."""
+    """Load configuration."""
     from agent.config.loader import load_config
     return load_config()
 
@@ -72,10 +65,15 @@ def list_agents(
     if json_output:
         agents_data = []
         for agent_id in agent_ids:
-            agent_config = resolve_agent_config(config, agent_id)
-            if agent_config:
-                agent_config["is_default"] = agent_id == default_id
-                agents_data.append(agent_config)
+            scope = build_agent_scope(config, agent_id)
+            if scope:
+                agents_data.append({
+                    "id": scope.agent_id,
+                    "name": scope.name,
+                    "model": scope.model,
+                    "workspace": str(scope.workspace),
+                    "is_default": agent_id == default_id,
+                })
         console.print(json.dumps(agents_data, indent=2, default=str))
         return
 
@@ -88,14 +86,14 @@ def list_agents(
     table.add_column("Default", style="magenta")
 
     for agent_id in agent_ids:
-        agent_config = resolve_agent_config(config, agent_id)
-        if agent_config:
+        scope = build_agent_scope(config, agent_id)
+        if scope:
             is_default = "✓" if agent_id == default_id else ""
             table.add_row(
-                agent_config.get("id", agent_id),
-                agent_config.get("name") or "-",
-                agent_config.get("model") or "-",
-                str(agent_config.get("workspace") or "-")[:40],
+                scope.agent_id,
+                scope.name or "-",
+                scope.model or "-",
+                str(scope.workspace)[:40],
                 is_default,
             )
 
@@ -120,17 +118,27 @@ def show_agent(
     config = _load_config()
 
     normalized_id = normalize_agent_id(agent_id)
-    agent_config = resolve_agent_config(config, normalized_id)
+    scope = build_agent_scope(config, normalized_id)
 
-    if not agent_config:
+    if not scope:
         console.print(f"[red]Agent '{agent_id}' not found[/red]")
         raise typer.Exit(1)
 
-    # Add path information
-    agent_config["workspace_path"] = str(resolve_agent_workspace(config, normalized_id))
-    agent_config["memory_path"] = str(resolve_agent_memory_dir(config, normalized_id))
-    agent_config["sessions_path"] = str(resolve_agent_sessions_dir(config, normalized_id))
-    agent_config["is_default"] = normalized_id == resolve_default_agent_id(config)
+    # Build agent config dict for output
+    agent_config = {
+        "id": scope.agent_id,
+        "name": scope.name,
+        "model": scope.model,
+        "provider": scope.provider,
+        "max_tokens": scope.max_tokens,
+        "temperature": scope.temperature,
+        "workspace_path": str(scope.workspace),
+        "memory_path": str(scope.memory_dir),
+        "sessions_path": str(scope.sessions_dir),
+        "is_default": normalized_id == resolve_default_agent_id(config),
+        "skills": scope.skills,
+        "identity": scope.identity,
+    }
 
     if json_output:
         console.print(json.dumps(agent_config, indent=2, default=str))
@@ -195,11 +203,11 @@ def add_agent(
     if normalized_id in existing_ids and normalized_id != "default":
         # Agent exists - show interactive prompt
         console.print(f"Agent '{normalized_id}' already exists")
-        existing_config = resolve_agent_config(config, normalized_id)
-        if existing_config:
-            console.print(f"  Current name: {existing_config.get('name') or '-'}")
-            console.print(f"  Current model: {existing_config.get('model') or '-'}")
-            console.print(f"  Current workspace: {existing_config.get('workspace') or '-'}")
+        existing_scope = build_agent_scope(config, normalized_id)
+        if existing_scope:
+            console.print(f"  Current name: {existing_scope.name or '-'}")
+            console.print(f"  Current model: {existing_scope.model or '-'}")
+            console.print(f"  Current workspace: {str(existing_scope.workspace) or '-'}")
         console.print("")
         console.print("  [bold]y[/bold] = overwrite with new values (existing config will be replaced)")
         console.print("  [bold]N[/bold] = update config, keeping existing values and merging new fields")
@@ -293,7 +301,7 @@ def add_agent(
             console.print("  Set as default")
         console.print("\n[yellow]Note: Restart the gateway for changes to take effect[/yellow]")
     else:
-        # New agent - show welcome message like nanobot onboard
+        # New agent - show welcome message
         console.print(f"[green]✓[/green] Agent '{normalized_id}' added to config")
         console.print("")
         console.print(f"[bold]🤖 Agent '{normalized_id}' is ready![/bold]")
@@ -307,10 +315,10 @@ def add_agent(
         console.print("")
         console.print("[bold]Next steps:[/bold]")
         console.print(f"  1. View agent details: manobot agents show {normalized_id}")
-        console.print(f"  2. Bind to a channel:  manobot agents bind {normalized_id} --channel telegram --peer-id <chat_id>")
+        console.print("  2. Configure channels in the agent's config (per-agent channels)")
         console.print("  3. Start gateway:      manobot gateway")
         console.print("")
-        console.print("[dim]Docs: https://github.com/HKUDS/nanobot[/dim]")
+        console.print("[dim]Docs: https://github.com/HKUDS/manobot[/dim]")
 
 
 @agents_app.command("delete")
@@ -336,8 +344,8 @@ def delete_agent(
     normalized_id = normalize_agent_id(agent_id)
 
     # Check if agent exists
-    agent_config = resolve_agent_config(config, normalized_id)
-    if not agent_config:
+    scope = build_agent_scope(config, normalized_id)
+    if not scope:
         console.print(f"[red]Agent '{agent_id}' not found[/red]")
         raise typer.Exit(1)
 
@@ -374,8 +382,8 @@ def set_default(
 ):
     """Set an agent as the default.
 
-    The default agent receives all messages that don't match any
-    specific binding rules. There can only be one default agent.
+    The default agent is used when no specific agent is requested.
+    There can only be one default agent.
 
     Examples:
         manobot agents set-default assistant
@@ -409,142 +417,112 @@ def set_default(
     console.print(f"[green]✓[/green] Set default agent: {normalized_id}")
 
 
-@agents_app.command("bindings")
-def list_bindings(
-    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON instead of table"),
+@agents_app.command("start")
+def start_agent_cmd(
+    agent_id: str = typer.Argument(..., help="Agent ID to start"),
+    base_port: int = typer.Option(18791, "--base-port", "-p", help="Base port for agent subprocess"),
 ):
-    """List all channel-to-agent bindings.
+    """Start a single agent subprocess.
 
-    Bindings route messages from specific channels/chats to designated agents.
-    For example, you can route all messages from a Telegram group to a
-    specialized 'support' agent.
+    Starts the specified agent as an isolated subprocess with its own
+    HTTP API, channels, and memory. The agent will be assigned a port
+    from the base port range.
+
+    Note: For production use, prefer 'manobot gateway' which starts all
+    agents with health monitoring. This command is for manual control.
 
     Examples:
-        manobot agents bindings         # Display as formatted table
-        manobot agents bindings --json  # Output as JSON
+        manobot agents start coder
+        manobot agents start assistant --base-port 19000
     """
-    config = _load_config()
-    bindings = config.agents.bindings
+    import asyncio
 
-    if json_output:
-        bindings_data = [
-            {
-                "agent_id": b.agent_id,
-                "channel": b.match.channel,
-                "peer_type": b.match.peer_type,
-                "peer_id": b.match.peer_id,
-                "comment": b.comment,
-            }
-            for b in bindings
-        ]
-        console.print(json.dumps(bindings_data, indent=2))
-        return
-
-    if not bindings:
-        console.print("[yellow]No bindings configured[/yellow]")
-        console.print("\nAll messages will be routed to the default agent.")
-        return
-
-    table = Table(title="Agent Bindings")
-    table.add_column("#", style="dim")
-    table.add_column("Agent", style="cyan")
-    table.add_column("Channel", style="green")
-    table.add_column("Peer Type", style="yellow")
-    table.add_column("Peer ID", style="blue")
-    table.add_column("Comment", style="dim")
-
-    for idx, binding in enumerate(bindings):
-        table.add_row(
-            str(idx),
-            binding.agent_id,
-            binding.match.channel,
-            binding.match.peer_type or "-",
-            binding.match.peer_id or "-",
-            binding.comment or "-",
-        )
-
-    console.print(table)
-    console.print(f"\nTotal: {len(bindings)} binding(s)")
-
-
-@agents_app.command("bind")
-def add_binding(
-    agent_id: str = typer.Argument(..., help="Target agent ID to route messages to"),
-    channel: str = typer.Option(..., "--channel", "-c", help="Channel name (telegram, discord, slack, etc.)"),
-    peer_type: Optional[str] = typer.Option(None, "--peer-type", "-t", help="Peer type: direct, group, or channel"),
-    peer_id: Optional[str] = typer.Option(None, "--peer-id", "-p", help="Peer/chat ID (e.g., Telegram chat ID)"),
-    comment: Optional[str] = typer.Option(None, "--comment", help="Optional description for this binding"),
-    force: bool = typer.Option(False, "--force", "-f", help="Skip validation checks"),
-):
-    """Add a new channel-to-agent binding.
-
-    Creates a routing rule that directs messages from a specific channel
-    or chat to a designated agent. This enables multi-agent setups where
-    different agents handle different contexts.
-
-    Note: You need to restart the gateway for changes to take effect.
-
-    Examples:
-        # Route all Telegram messages to 'assistant' agent
-        manobot agents bind assistant --channel telegram
-
-        # Route specific Telegram group to 'coder' agent
-        manobot agents bind coder --channel telegram --peer-type group --peer-id -100123456789
-
-        # Route Discord DMs to 'support' agent
-        manobot agents bind support --channel discord --peer-type direct --comment "Support requests"
-    """
-    from agent.config.loader import get_config_path
+    from mano.core.process_manager import ProcessManager
 
     config = _load_config()
     normalized_id = normalize_agent_id(agent_id)
 
-    # Validate agent exists
-    agent_ids = list_agent_ids(config)
-    if normalized_id not in agent_ids and normalized_id != "default":
-        if not force:
-            console.print(f"[red]Error: Agent '{normalized_id}' not found[/red]")
-            console.print(f"Available agents: {', '.join(agent_ids)}")
-            console.print("\nUse --force to add binding anyway")
-            raise typer.Exit(1)
-        console.print(f"[yellow]Warning: Agent '{normalized_id}' not found in config[/yellow]")
-
-    # Validate peer_type
-    if peer_type and peer_type not in VALID_PEER_TYPES:
-        console.print(f"[red]Error: Invalid peer_type '{peer_type}'[/red]")
-        console.print(f"Valid values: {', '.join(sorted(VALID_PEER_TYPES))}")
+    if normalized_id not in list_agent_ids(config):
+        console.print(f"[red]Agent '{agent_id}' not found[/red]")
         raise typer.Exit(1)
 
-    # Build binding
-    new_binding = {
-        "agentId": normalized_id,
-        "match": {
-            "channel": channel,
-        }
-    }
-    if peer_type:
-        new_binding["match"]["peerType"] = peer_type
-    if peer_id:
-        new_binding["match"]["peerId"] = peer_id
-    if comment:
-        new_binding["comment"] = comment
+    manager = ProcessManager(config, base_port=base_port)
 
-    # Load and modify config file
-    config_path = get_config_path()
-    with open(config_path, "r") as f:
-        config_data = json.load(f)
+    async def _start():
+        result = await manager.start_agent(normalized_id)
+        if result.status == "running":
+            console.print(f"[green]OK[/green] Agent '{normalized_id}' running on port {result.port} (pid={result.pid})")
+        else:
+            console.print(f"[red]FAIL[/red] Agent '{normalized_id}': {result.error_message}")
+            raise typer.Exit(1)
 
-    # Ensure agents.bindings exists
-    if "agents" not in config_data:
-        config_data["agents"] = {}
-    if "bindings" not in config_data["agents"]:
-        config_data["agents"]["bindings"] = []
+    asyncio.run(_start())
 
-    config_data["agents"]["bindings"].append(new_binding)
 
-    # Write back
-    with open(config_path, "w") as f:
-        json.dump(config_data, f, indent=2)
+@agents_app.command("stop")
+def stop_agent_cmd(
+    agent_id: str = typer.Argument(..., help="Agent ID to stop"),
+    timeout: float = typer.Option(10.0, "--timeout", "-t", help="Shutdown timeout in seconds"),
+):
+    """Stop a running agent subprocess.
 
-    console.print(f"[green]✓[/green] Added binding: {channel} -> {normalized_id}")
-    console.print("\n[yellow]Note: Restart the gateway for changes to take effect[/yellow]")
+    Sends a graceful shutdown request via HTTP, then falls back to
+    SIGTERM/SIGKILL if the agent doesn't stop in time.
+
+    Examples:
+        manobot agents stop coder
+        manobot agents stop assistant --timeout 30
+    """
+    import asyncio
+
+    from mano.core.process_manager import ProcessManager
+
+    config = _load_config()
+    normalized_id = normalize_agent_id(agent_id)
+    manager = ProcessManager(config)
+
+    async def _stop():
+        stopped = await manager.stop_agent(normalized_id, timeout=timeout)
+        if stopped:
+            console.print(f"[green]OK[/green] Agent '{normalized_id}' stopped")
+        else:
+            console.print(f"[yellow]Agent '{normalized_id}' was not running[/yellow]")
+
+    asyncio.run(_stop())
+
+
+@agents_app.command("restart")
+def restart_agent_cmd(
+    agent_id: str = typer.Argument(..., help="Agent ID to restart"),
+    base_port: int = typer.Option(18791, "--base-port", "-p", help="Base port for agent subprocess"),
+):
+    """Restart a running agent subprocess.
+
+    Stops and then starts the agent. Useful after configuration changes.
+
+    Examples:
+        manobot agents restart coder
+    """
+    import asyncio
+
+    from mano.core.process_manager import ProcessManager
+
+    config = _load_config()
+    normalized_id = normalize_agent_id(agent_id)
+
+    if normalized_id not in list_agent_ids(config):
+        console.print(f"[red]Agent '{agent_id}' not found[/red]")
+        raise typer.Exit(1)
+
+    manager = ProcessManager(config, base_port=base_port)
+
+    async def _restart():
+        console.print(f"Restarting agent '{normalized_id}'...")
+        result = await manager.restart_agent(normalized_id)
+        if result.status == "running":
+            console.print(f"[green]OK[/green] Agent '{normalized_id}' running on port {result.port} (pid={result.pid})")
+        else:
+            console.print(f"[red]FAIL[/red] Agent '{normalized_id}': {result.error_message}")
+            raise typer.Exit(1)
+
+    asyncio.run(_restart())

@@ -1,4 +1,4 @@
-"""Cron service for scheduling agent tasks."""
+﻿"""Cron service for scheduling agent tasks."""
 
 import asyncio
 import json
@@ -374,3 +374,4 @@ class CronService:
             "jobs": len(store.jobs),
             "next_wake_at_ms": self._get_next_wake_ms(),
         }
+

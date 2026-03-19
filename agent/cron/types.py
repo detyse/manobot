@@ -1,4 +1,4 @@
-"""Cron types."""
+﻿"""Cron types."""
 
 from dataclasses import dataclass, field
 from typing import Literal
@@ -57,3 +57,4 @@ class CronStore:
     """Persistent store for cron jobs."""
     version: int = 1
     jobs: list[CronJob] = field(default_factory=list)
+

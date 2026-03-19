@@ -16,7 +16,7 @@ def no_email_threads(monkeypatch):
     async def _run_inline(func, *args, **kwargs):
         return func(*args, **kwargs)
 
-    monkeypatch.setattr("nanobot.channels.email.asyncio.to_thread", _run_inline)
+    monkeypatch.setattr("agent.channels.email.asyncio.to_thread", _run_inline)
 
 
 def _make_config() -> EmailConfig:
@@ -76,7 +76,7 @@ def test_fetch_new_messages_parses_unseen_and_marks_seen(monkeypatch) -> None:
             return "BYE", [b""]
 
     fake = FakeIMAP()
-    monkeypatch.setattr("nanobot.channels.email.imaplib.IMAP4_SSL", lambda _h, _p: fake)
+    monkeypatch.setattr("agent.channels.email.imaplib.IMAP4_SSL", lambda _h, _p: fake)
 
     channel = EmailChannel(_make_config(), MessageBus())
     items = channel._fetch_new_messages()
@@ -250,7 +250,7 @@ def test_fetch_messages_between_dates_uses_imap_since_before_without_mark_seen(m
             return "BYE", [b""]
 
     fake = FakeIMAP()
-    monkeypatch.setattr("nanobot.channels.email.imaplib.IMAP4_SSL", lambda _h, _p: fake)
+    monkeypatch.setattr("agent.channels.email.imaplib.IMAP4_SSL", lambda _h, _p: fake)
 
     channel = EmailChannel(_make_config(), MessageBus())
     items = channel.fetch_messages_between_dates(

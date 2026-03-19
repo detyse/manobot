@@ -1,12 +1,13 @@
-"""Matrix (Element) channel — inbound sync + outbound message/media delivery."""
+﻿"""Matrix (Element) channel â€” inbound sync + outbound message/media delivery."""
 
 import asyncio
 import logging
 import mimetypes
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 from loguru import logger
+from pydantic import Field
 
 try:
     import nh3
@@ -37,8 +38,10 @@ except ImportError as e:
     ) from e
 
 from agent.bus.events import OutboundMessage
+from agent.bus.queue import MessageBus
 from agent.channels.base import BaseChannel
-from agent.config.loader import get_data_dir
+from agent.config.paths import get_data_dir, get_media_dir
+from agent.config.schema import Base
 from agent.utils.helpers import safe_filename
 
 TYPING_NOTICE_TIMEOUT_MS = 30_000
@@ -142,19 +145,51 @@ def _configure_nio_logging_bridge() -> None:
         nio_logger.propagate = False
 
 
+class MatrixConfig(Base):
+    """Matrix (Element) channel configuration."""
+
+    enabled: bool = False
+    homeserver: str = "https://matrix.org"
+    access_token: str = ""
+    user_id: str = ""
+    device_id: str = ""
+    e2ee_enabled: bool = True
+    sync_stop_grace_seconds: int = 2
+    max_media_bytes: int = 20 * 1024 * 1024
+    allow_from: list[str] = Field(default_factory=list)
+    group_policy: Literal["open", "mention", "allowlist"] = "open"
+    group_allow_from: list[str] = Field(default_factory=list)
+    allow_room_mentions: bool = False
+
+
 class MatrixChannel(BaseChannel):
     """Matrix (Element) channel using long-polling sync."""
 
     name = "matrix"
+    display_name = "Matrix"
 
-    def __init__(self, config: Any, bus, *, restrict_to_workspace: bool = False,
-                 workspace: Path | None = None):
+    @classmethod
+    def default_config(cls) -> dict[str, Any]:
+        return MatrixConfig().model_dump(by_alias=True)
+
+    def __init__(
+        self,
+        config: Any,
+        bus: MessageBus,
+        *,
+        restrict_to_workspace: bool = False,
+        workspace: str | Path | None = None,
+    ):
+        if isinstance(config, dict):
+            config = MatrixConfig.model_validate(config)
         super().__init__(config, bus)
         self.client: AsyncClient | None = None
         self._sync_task: asyncio.Task | None = None
         self._typing_tasks: dict[str, asyncio.Task] = {}
-        self._restrict_to_workspace = restrict_to_workspace
-        self._workspace = workspace.expanduser().resolve() if workspace else None
+        self._restrict_to_workspace = bool(restrict_to_workspace)
+        self._workspace = (
+            Path(workspace).expanduser().resolve(strict=False) if workspace is not None else None
+        )
         self._server_upload_limit_bytes: int | None = None
         self._server_upload_limit_checked = False
 
@@ -289,7 +324,7 @@ class MatrixChannel(BaseChannel):
         return None
 
     async def _effective_media_limit_bytes(self) -> int:
-        """min(local config, server advertised) — 0 blocks all uploads."""
+        """min(local config, server advertised) â€” 0 blocks all uploads."""
         local_limit = max(int(self.config.max_media_bytes), 0)
         server_limit = await self._resolve_server_upload_limit_bytes()
         if server_limit is None:
@@ -390,7 +425,7 @@ class MatrixChannel(BaseChannel):
         self.client.add_response_callback(self._on_send_error, RoomSendError)
 
     def _log_response_error(self, label: str, response: Any) -> None:
-        """Log Matrix response errors — auth errors at ERROR level, rest at WARNING."""
+        """Log Matrix response errors â€” auth errors at ERROR level, rest at WARNING."""
         code = getattr(response, "status_code", None)
         is_auth = code in {"M_UNKNOWN_TOKEN", "M_FORBIDDEN", "M_UNAUTHORIZED"}
         is_fatal = is_auth or getattr(response, "soft_logout", False)
@@ -490,9 +525,7 @@ class MatrixChannel(BaseChannel):
         return False
 
     def _media_dir(self) -> Path:
-        d = get_data_dir() / "media" / "matrix"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+        return get_media_dir("matrix")
 
     @staticmethod
     def _event_source_content(event: RoomMessage) -> dict[str, Any]:
@@ -657,9 +690,6 @@ class MatrixChannel(BaseChannel):
             meta["event_id"] = eid
         if thread := self._thread_metadata(event):
             meta.update(thread)
-        # Determine peer_type: Matrix direct rooms have is_direct=True
-        is_direct = getattr(room, "is_direct", False) or len(getattr(room, "users", {})) <= 2
-        meta["peer_type"] = "direct" if is_direct else "group"
         return meta
 
     async def _on_message(self, room: MatrixRoom, event: RoomMessageText) -> None:
@@ -682,7 +712,14 @@ class MatrixChannel(BaseChannel):
         parts: list[str] = []
         if isinstance(body := getattr(event, "body", None), str) and body.strip():
             parts.append(body.strip())
-        if marker:
+
+        if attachment and attachment.get("type") == "audio":
+            transcription = await self.transcribe_audio(attachment["path"])
+            if transcription:
+                parts.append(f"[transcription: {transcription}]")
+            else:
+                parts.append(marker)
+        elif marker:
             parts.append(marker)
 
         await self._start_typing_keepalive(room.room_id)
@@ -700,3 +737,4 @@ class MatrixChannel(BaseChannel):
         except Exception:
             await self._stop_typing_keepalive(room.room_id, clear_typing=True)
             raise
+

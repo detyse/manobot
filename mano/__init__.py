@@ -3,24 +3,20 @@
 __version__ = "0.1.0"
 __logo__ = "🤖"
 
-from mano.agents.scope import (
+from mano.core.scope import (
     DEFAULT_AGENT_ID,
-    list_agent_entries,
+    build_session_key,
     list_agent_ids,
     normalize_agent_id,
-    resolve_agent_config,
-    resolve_agent_workspace,
+    parse_session_key,
     resolve_default_agent_id,
-    resolve_session_agent_id,
 )
 
 __all__ = [
     "DEFAULT_AGENT_ID",
-    "list_agent_entries",
+    "build_session_key",
     "list_agent_ids",
     "normalize_agent_id",
-    "resolve_agent_config",
-    "resolve_agent_workspace",
+    "parse_session_key",
     "resolve_default_agent_id",
-    "resolve_session_agent_id",
 ]
