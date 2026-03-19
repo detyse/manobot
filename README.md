@@ -1,6 +1,10 @@
 # Manobot
 
-A multi-instance wrapper for [nanobot](https://github.com/HKUDS/nanobot).
+> **This is a wrapper project for [nanobot](https://github.com/HKUDS/nanobot).**
+>
+> Manobot extends nanobot with multi-instance management capabilities. The core agent functionality
+> comes from the upstream [nanobot](https://github.com/HKUDS/nanobot) project. Please refer to the
+> upstream repository for the core features, documentation, and contributions.
 
 Manobot manages multiple nanobot agent instances as isolated subprocesses. Each agent runs as an independent nanobot process with its own workspace, memory, sessions, and channel configuration. Manobot handles configuration generation, process lifecycle, health monitoring, and CLI interaction.
 
