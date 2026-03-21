@@ -153,15 +153,15 @@ async def _run(agent_id: str, port: int, config_path: Path) -> None:
     from agent.agent.loop import AgentLoop
     from agent.bus.queue import MessageBus
     from agent.channels.manager import ChannelManager
-    from agent.config.loader import load_config
+    from agent.config.loader import load_agent_config
     from agent.cron.service import CronService
     from agent.cron.types import CronJob
     from agent.heartbeat.service import HeartbeatService
     from agent.session.manager import SessionManager
     from agent.utils.helpers import sync_workspace_templates
 
-    # Load per-agent config
-    config = load_config(config_path)
+    # Load per-agent config (with fallback to global config)
+    config = load_agent_config(agent_id, config_path)
     workspace = config.workspace_path
     sync_workspace_templates(workspace)
     defaults = config.agents.defaults

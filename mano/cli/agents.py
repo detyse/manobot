@@ -196,12 +196,16 @@ def add_agent(
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Custom workspace directory path"),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="LLM model to use (e.g., 'anthropic/claude-sonnet-4-20250514')"),
     default: bool = typer.Option(False, "--default", "-d", help="Set as the default agent"),
+    no_local_config: bool = typer.Option(False, "--no-local-config", help="Don't create a separate config file for this agent"),
 ):
     """Add a new agent to the configuration.
 
     Creates a new agent with its own isolated workspace, memory, and sessions.
     The agent ID must be unique and can only contain alphanumeric characters
     and hyphens.
+
+    By default, a separate config file is created at ~/.manobot/agents/{agent_id}/config.json
+    for agent-specific settings. Use --no-local-config to skip this.
 
     Note: This command modifies the config file. You need to restart
     the gateway for changes to take effect.
@@ -211,7 +215,7 @@ def add_agent(
         manobot agents add writer --model "openai/gpt-4o" --workspace ~/writing
         manobot agents add assistant-v2 --default
     """
-    from agent.config.loader import get_config_path
+    from agent.config.loader import get_agent_config_path, get_config_path
 
     config = _load_config()
     normalized_id = normalize_agent_id(agent_id)
@@ -308,6 +312,44 @@ def add_agent(
     with open(config_path, "w") as f:
         json.dump(config_data, f, indent=2)
 
+    # Create per-agent config file (unless disabled)
+    agent_config_path = get_agent_config_path(normalized_id)
+    if not no_local_config and not existing_agent:
+        # Only create for new agents, not updates
+        try:
+            agent_config_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Build minimal agent-specific config
+            agent_config = {
+                "agents": {
+                    "list": [
+                        {
+                            "id": normalized_id,
+                            "name": name,
+                            "workspace": workspace,
+                            "model": model,
+                        }
+                    ]
+                }
+            }
+            
+            # Remove None values
+            agent_config["agents"]["list"][0] = {
+                k: v for k, v in agent_config["agents"]["list"][0].items() 
+                if v is not None
+            }
+            
+            # Add default flag if set
+            if default:
+                agent_config["agents"]["list"][0]["default"] = True
+            
+            with open(agent_config_path, "w", encoding="utf-8") as f:
+                json.dump(agent_config, f, indent=2, ensure_ascii=False)
+            
+            console.print(f"[dim]Created agent config: {agent_config_path}[/dim]")
+        except Exception as e:
+            console.print(f"[yellow]Warning: Failed to create agent config file: {e}[/yellow]")
+
     if existing_agent:
         # Update/overwrite mode - brief output
         action = "Updated" if existing_agent == "update" else "Replaced"
@@ -333,10 +375,16 @@ def add_agent(
         console.print(f"  Model:     {model or '(uses default)'}")
         console.print(f"  Workspace: {workspace or '(uses default)'}")
         console.print(f"  Default:   {'Yes' if default else 'No'}")
+        if not no_local_config:
+            console.print(f"  Config:    {agent_config_path}")
         console.print("")
         console.print("[bold]Next steps:[/bold]")
         console.print(f"  1. View agent details: manobot agents show {normalized_id}")
-        console.print("  2. Configure channels in the agent's config (per-agent channels)")
+        if not no_local_config:
+            console.print(f"  2. Edit agent config:  {agent_config_path}")
+            console.print("     (add channels, providers, tools, etc.)")
+        else:
+            console.print("  2. Configure channels in the global config")
         console.print("  3. Start gateway:      manobot gateway")
         console.print("")
         console.print("[dim]Docs: https://github.com/HKUDS/manobot[/dim]")
