@@ -108,14 +108,17 @@ def show_agent(
 ):
     """Show detailed information about a specific agent.
 
-    Displays comprehensive details including configuration, paths
-    (workspace, memory, sessions), and identity settings.
+    Displays comprehensive details including status, config path,
+    workspace, provider, model, and identity settings.
 
     Examples:
         manobot agents show assistant       # Show details for 'assistant'
         manobot agents show coder --json    # Output as JSON
     """
+    from agent.config.loader import get_config_path
+
     config = _load_config()
+    config_path = get_config_path()
 
     normalized_id = normalize_agent_id(agent_id)
     scope = build_agent_scope(config, normalized_id)
@@ -124,14 +127,28 @@ def show_agent(
         console.print(f"[red]Agent '{agent_id}' not found[/red]")
         raise typer.Exit(1)
 
+    # Check status based on directory existence
+    workspace_exists = scope.workspace.exists()
+    memory_exists = scope.memory_dir.exists()
+    sessions_exists = scope.sessions_dir.exists()
+    if workspace_exists and memory_exists:
+        status = "[green]ready[/green]"
+    elif workspace_exists:
+        status = "[yellow]partial[/yellow]"
+    else:
+        status = "[red]not initialized[/red]"
+
     # Build agent config dict for output
     agent_config = {
         "id": scope.agent_id,
         "name": scope.name,
+        "status": "ready" if workspace_exists and memory_exists else ("partial" if workspace_exists else "not_initialized"),
+        "config_path": str(config_path),
         "model": scope.model,
         "provider": scope.provider,
         "max_tokens": scope.max_tokens,
         "temperature": scope.temperature,
+        "context_window_tokens": scope.context_window_tokens,
         "workspace_path": str(scope.workspace),
         "memory_path": str(scope.memory_dir),
         "sessions_path": str(scope.sessions_dir),
@@ -145,16 +162,20 @@ def show_agent(
         return
 
     console.print(f"\n[bold cyan]Agent: {normalized_id}[/bold cyan]")
+    console.print(f"  Status:     {status}")
     console.print(f"  Name:       {agent_config.get('name') or '-'}")
+    console.print(f"  Default:    {'Yes' if agent_config['is_default'] else 'No'}")
+    console.print("\n[bold]Config:[/bold]")
+    console.print(f"  Config:     {config_path}")
     console.print(f"  Model:      {agent_config.get('model') or '-'}")
     console.print(f"  Provider:   {agent_config.get('provider') or 'auto'}")
     console.print(f"  Max Tokens: {agent_config.get('max_tokens') or '-'}")
+    console.print(f"  Context:    {agent_config.get('context_window_tokens') or '-'} tokens")
     console.print(f"  Temperature:{agent_config.get('temperature') or '-'}")
-    console.print(f"  Default:    {'Yes' if agent_config['is_default'] else 'No'}")
     console.print("\n[bold]Paths:[/bold]")
-    console.print(f"  Workspace:  {agent_config['workspace_path']}")
-    console.print(f"  Memory:     {agent_config['memory_path']}")
-    console.print(f"  Sessions:   {agent_config['sessions_path']}")
+    console.print(f"  Workspace:  {agent_config['workspace_path']} {'[green]✓[/green]' if workspace_exists else '[red]✗[/red]'}")
+    console.print(f"  Memory:     {agent_config['memory_path']} {'[green]✓[/green]' if memory_exists else '[red]✗[/red]'}")
+    console.print(f"  Sessions:   {agent_config['sessions_path']} {'[green]✓[/green]' if sessions_exists else '[dim]✗[/dim]'}")
 
     if agent_config.get("skills"):
         console.print(f"\n[bold]Skills:[/bold] {', '.join(agent_config['skills'])}")
