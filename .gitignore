@@ -24,6 +24,6 @@ uv.lock
 .qoder/
 .ruff_cache/
 
-nanobot/
+/nanobot/
 
 _docs/

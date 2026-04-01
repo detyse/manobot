@@ -27,27 +27,42 @@ def _make_provider(
     temperature_override: float | None = None,
     reasoning_effort_override: str | None = None,
 ):
-    """Create LLM provider from config (mirrors agent/cli/commands.py logic)."""
+    """Create LLM provider from config using new provider system."""
     from agent.providers.base import GenerationSettings
+    from agent.providers.anthropic_provider import AnthropicProvider
     from agent.providers.azure_openai_provider import AzureOpenAIProvider
-    from agent.providers.custom_provider import CustomProvider
-    from agent.providers.litellm_provider import LiteLLMProvider
     from agent.providers.openai_codex_provider import OpenAICodexProvider
+    from agent.providers.openai_compat_provider import OpenAICompatProvider
     from agent.providers.registry import find_by_name
 
     defaults = config.agents.defaults
     model = model_override or defaults.model
     forced_provider = provider_override or defaults.provider
+
     if forced_provider != "auto":
-        provider_name = forced_provider
-        p = getattr(config.providers, forced_provider, None)
+        spec = find_by_name(forced_provider)
     else:
         provider_name = config.get_provider_name(model)
-        p = config.get_provider(model)
+        spec = find_by_name(provider_name) if provider_name else None
 
-    if provider_name == "openai_codex" or model.startswith("openai-codex/"):
-        provider = OpenAICodexProvider(default_model=model)
-    elif provider_name == "azure_openai":
+    p = config.get_provider(model)
+
+    if spec is None:
+        # Fallback to OpenAI-compatible provider
+        provider = OpenAICompatProvider(
+            api_key=p.api_key if p else None,
+            api_base=config.get_api_base(model),
+            default_model=model,
+            extra_headers=p.extra_headers if p else None,
+        )
+    elif spec.backend == "anthropic":
+        provider = AnthropicProvider(
+            api_key=p.api_key if p else None,
+            api_base=config.get_api_base(model),
+            default_model=model,
+            extra_headers=p.extra_headers if p else None,
+        )
+    elif spec.backend == "azure_openai":
         if not p or not p.api_key or not p.api_base:
             logger.error("Azure OpenAI requires api_key and api_base")
             sys.exit(1)
@@ -56,29 +71,16 @@ def _make_provider(
             api_base=p.api_base,
             default_model=model,
         )
-    elif provider_name == "custom":
-        provider = CustomProvider(
-            api_key=p.api_key if p else "no-key",
-            api_base=config.get_api_base(model) or "http://localhost:8000/v1",
-            default_model=model,
-            extra_headers=p.extra_headers if p else None,
-        )
+    elif spec.backend == "openai_codex":
+        provider = OpenAICodexProvider(default_model=model)
     else:
-        spec = find_by_name(provider_name)
-        if (
-            not model.startswith("bedrock/")
-            and not (p and p.api_key)
-            and not (spec and (spec.is_oauth or spec.is_local))
-        ):
-            logger.error("No API key configured for provider '{}'", provider_name)
-            sys.exit(1)
-
-        provider = LiteLLMProvider(
+        # Default to OpenAI-compatible provider
+        provider = OpenAICompatProvider(
             api_key=p.api_key if p else None,
             api_base=config.get_api_base(model),
             default_model=model,
             extra_headers=p.extra_headers if p else None,
-            provider_name=provider_name,
+            spec=spec,
         )
 
     provider.generation = GenerationSettings(
@@ -217,6 +219,8 @@ async def _run(agent_id: str, port: int, config_path: Path) -> None:
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
         memory_dir=memory_dir,
+        timezone=defaults.timezone,
+        hooks=[],
         on_restart=_request_restart,
     )
 

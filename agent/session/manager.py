@@ -1,4 +1,4 @@
-﻿"""Session management for conversation history."""
+"""Session management for conversation history."""
 
 import json
 import shutil
@@ -98,6 +98,32 @@ class Session:
         self.last_consolidated = 0
         self.updated_at = datetime.now()
 
+    def retain_recent_legal_suffix(self, max_messages: int) -> None:
+        """Keep a legal recent suffix, mirroring get_history boundary rules."""
+        if max_messages <= 0:
+            self.clear()
+            return
+        if len(self.messages) <= max_messages:
+            return
+
+        start_idx = max(0, len(self.messages) - max_messages)
+
+        # If the cutoff lands mid-turn, extend backward to the nearest user turn.
+        while start_idx > 0 and self.messages[start_idx].get("role") != "user":
+            start_idx -= 1
+
+        retained = self.messages[start_idx:]
+
+        # Mirror get_history(): avoid persisting orphan tool results at the front.
+        start = self._find_legal_start(retained)
+        if start:
+            retained = retained[start:]
+
+        dropped = len(self.messages) - len(retained)
+        self.messages = retained
+        self.last_consolidated = max(0, self.last_consolidated - dropped)
+        self.updated_at = datetime.now()
+
 
 class SessionManager:
     """
@@ -106,9 +132,9 @@ class SessionManager:
     Sessions are stored as JSONL files in the sessions directory.
     """
 
-    def __init__(self, workspace: Path, sessions_dir: Path | None = None):
+    def __init__(self, workspace: Path):
         self.workspace = workspace
-        self.sessions_dir = ensure_dir(sessions_dir or (self.workspace / "sessions"))
+        self.sessions_dir = ensure_dir(self.workspace / "sessions")
         self.legacy_sessions_dir = get_legacy_sessions_dir()
         self._cache: dict[str, Session] = {}
 
@@ -240,4 +266,3 @@ class SessionManager:
                 continue
 
         return sorted(sessions, key=lambda x: x.get("updated_at", ""), reverse=True)
-

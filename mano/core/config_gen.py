@@ -52,6 +52,8 @@ def generate_agent_config(config: Config, agent_id: str) -> Path:
         "temperature": scope.temperature,
         "maxToolIterations": scope.max_tool_iterations,
     }
+    if scope.timezone:
+        defaults["timezone"] = scope.timezone
     if scope.memory_window is not None:
         defaults["memoryWindow"] = scope.memory_window
     if scope.reasoning_effort:
@@ -70,6 +72,8 @@ def generate_agent_config(config: Config, agent_id: str) -> Path:
     agent_entry["contextWindowTokens"] = scope.context_window_tokens
     agent_entry["temperature"] = scope.temperature
     agent_entry["maxToolIterations"] = scope.max_tool_iterations
+    if scope.timezone:
+        agent_entry["timezone"] = scope.timezone
     if scope.reasoning_effort:
         agent_entry["reasoningEffort"] = scope.reasoning_effort
 
@@ -98,12 +102,16 @@ def generate_agent_config(config: Config, agent_id: str) -> Path:
     # Gateway: not used by runner but keep for compat
     gateway = config.gateway.model_dump(by_alias=True)
 
+    # API: include api config from global
+    api = config.api.model_dump(by_alias=True)
+
     config_data = {
         "agents": agents_section,
         "providers": providers,
         "channels": channels,
         "tools": tools,
         "gateway": gateway,
+        "api": api,
     }
 
     # Write to agent dir

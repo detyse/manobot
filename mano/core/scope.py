@@ -39,7 +39,7 @@ class AgentScope:
     context_window_tokens: int
     temperature: float
     max_tool_iterations: int
-    memory_window: int | None
+    timezone: str | None = None
     reasoning_effort: str | None = None
     skills_dir: Path | None = None
     skills: list[str] | None = None
@@ -153,6 +153,7 @@ def build_agent_scope(config: Config, agent_id: str) -> AgentScope | None:
             context_window_tokens=defaults.context_window_tokens,
             temperature=defaults.temperature,
             max_tool_iterations=defaults.max_tool_iterations,
+            timezone=defaults.timezone,
             memory_window=defaults.memory_window,
             reasoning_effort=defaults.reasoning_effort,
         )
@@ -193,6 +194,7 @@ def build_agent_scope(config: Config, agent_id: str) -> AgentScope | None:
             if entry.max_tool_iterations is not None
             else defaults.max_tool_iterations
         ),
+        timezone=entry.timezone or defaults.timezone,
         memory_window=defaults.memory_window,
         reasoning_effort=entry.reasoning_effort or defaults.reasoning_effort,
         skills=entry.skills,
