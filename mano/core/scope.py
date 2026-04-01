@@ -40,6 +40,7 @@ class AgentScope:
     temperature: float
     max_tool_iterations: int
     timezone: str | None = None
+    memory_window: int | None = None
     reasoning_effort: str | None = None
     skills_dir: Path | None = None
     skills: list[str] | None = None

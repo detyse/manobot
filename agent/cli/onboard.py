@@ -299,7 +299,7 @@ def _show_config_panel(display_name: str, model: BaseModel, fields: list) -> Non
 
 def _show_main_menu_header() -> None:
     """Display the main menu header."""
-    from nanobot import __logo__, __version__
+    from agent import __logo__, __version__
 
     console.print()
     # Use Align.CENTER for the single line of text
