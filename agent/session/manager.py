@@ -132,9 +132,9 @@ class SessionManager:
     Sessions are stored as JSONL files in the sessions directory.
     """
 
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace: Path, sessions_dir: Path | None = None):
         self.workspace = workspace
-        self.sessions_dir = ensure_dir(self.workspace / "sessions")
+        self.sessions_dir = ensure_dir(sessions_dir or (self.workspace / "sessions"))
         self.legacy_sessions_dir = get_legacy_sessions_dir()
         self._cache: dict[str, Session] = {}
 

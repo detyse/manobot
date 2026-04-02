@@ -6,24 +6,30 @@
 > comes from the upstream [nanobot](https://github.com/HKUDS/nanobot) project. Please refer to the
 > upstream repository for the core features, documentation, and contributions.
 
-Manobot manages multiple nanobot agent instances as isolated subprocesses. Each agent runs as an independent nanobot process with its own workspace, memory, sessions, and channel configuration. Manobot handles configuration generation, process lifecycle, health monitoring, and CLI interaction.
+Manobot manages multiple nanobot agent instances as isolated subprocesses. Each agent runs as an independent nanobot process with its own workspace, memory, sessions, logs, and standalone config. Manobot handles agent onboarding, registry management, process lifecycle, health monitoring, and CLI interaction.
 
 ## How It Works
 
-```
+```text
 manobot gateway
   |
+  +-- registry (~/.manobot/agents/registry.json)
+  |
   +-- agent "assistant" (subprocess, port 18791)
+  |     config: ~/.manobot/agents/assistant/config.json
   |     nanobot agent loop + channels + HTTP API
   |
   +-- agent "coder" (subprocess, port 18792)
+  |     config: ~/.manobot/agents/coder/config.json
   |     nanobot agent loop + channels + HTTP API
   |
   +-- health monitor (auto-restart on crash)
 ```
 
-- `manobot gateway` acts as a supervisor: it spawns each configured agent as a separate `python -m mano.core.runner` process.
-- Each agent gets a generated nanobot-format config with its own channel configuration.
+- `manobot gateway` acts as a supervisor: it spawns each registered agent as a separate `python -m mano.core.runner` process.
+- `~/.manobot/agents/registry.json` stores the registered agent IDs and the default agent selection.
+- Each agent reads its own config from `~/.manobot/agents/<id>/config.json`.
+- Each runner writes logs to `~/.manobot/agents/<id>/logs/runner.log`.
 - Agents expose an HTTP API (`/api/health`, `/api/chat`, `/api/stop`) on `127.0.0.1`.
 - The CLI communicates with running agents via HTTP, or can run an agent directly in-process with `--direct`.
 
@@ -31,20 +37,13 @@ manobot gateway
 
 ```text
 manobot/
-├── nanobot/                  # Upstream nanobot core (synced from upstream)
-├── mano/                     # Multi-instance management layer
-│   ├── agents/               # Agent init/migration helpers
-│   ├── core/                 # Core infrastructure
-│   │   ├── state.py          # Process state persistence (~/.manobot/state/)
-│   │   ├── config_gen.py     # Per-agent config generator
-│   │   ├── runner.py         # Subprocess entry point (nanobot + HTTP API)
-│   │   ├── process_manager.py# Subprocess lifecycle management
-│   │   ├── health.py         # Health monitor with auto-restart
-│   │   └── scope.py          # Agent scope resolution
-│   └── cli/                  # CLI commands
-│       ├── main.py           # Top-level commands (gateway, agent, status)
-│       └── agents.py         # Agent management subcommands
+├── agent/                    # Upstream nanobot runtime package used at runtime
+├── mano/                     # Multi-agent management layer
+│   ├── agents/               # Registry, bootstrap, onboarding helpers
+│   ├── core/                 # Runner, process manager, scope, state
+│   └── cli/                  # Top-level CLI, agent commands, channel commands
 ├── bridge/                   # WhatsApp bridge (Node.js)
+├── nanobot/                  # Upstream repository mirror/reference
 ├── scripts/
 │   └── sync-upstream.sh      # Upstream sync helper
 └── tests/
@@ -71,59 +70,103 @@ uv pip install -e .
 
 ## Quick Start
 
-1. Initialize manobot (creates `~/.manobot` state and migrates config if needed):
+1. Initialize manobot:
 
 ```bash
 manobot init
 ```
 
-2. Configure your model/provider credentials in `~/.nanobot/config.json`.
-
-3. Manage agents:
+2. Inspect the default agent and edit its credentials:
 
 ```bash
-manobot agents list
-manobot agents add coder --name "Code Assistant" --model deepseek/deepseek-coder
-manobot agents set-default coder
+manobot show assistant
+# then edit ~/.manobot/agents/assistant/config.json
 ```
 
-4. Start the supervisor (launches all agents as subprocesses):
+3. Create or refresh more isolated agents:
+
+```bash
+manobot onboard coder --workspace ~/projects
+manobot add writer --name "Writer" --model openai/gpt-4o-mini
+manobot default coder
+```
+
+4. Start the supervisor:
 
 ```bash
 manobot gateway
 ```
 
-5. Check status:
+5. Check status and logs:
 
 ```bash
 manobot status
+manobot logs coder
+manobot logs coder --follow
 ```
 
-6. Chat with a running agent:
+6. Chat with agents:
 
 ```bash
 # via HTTP to a running subprocess (requires gateway)
 manobot agent -m "Hello"
 manobot agent --agent coder -m "Write a hello world"
+manobot coder -m "Write a hello world"
 
-# interactive mode
-manobot agent
+# interactive picker / direct chat
+manobot tui
+manobot tui coder
 
 # in-process mode (no gateway needed)
 manobot agent --direct -m "Hello"
 ```
 
+7. Manage one agent's channels:
+
+```bash
+manobot channels status --agent coder
+manobot channels login --agent coder
+manobot coder channels status
+manobot coder channels login
+```
+
 ## Configuration
 
-Manobot extends nanobot config in `~/.nanobot/config.json`.
+Each isolated agent keeps its own config in `~/.manobot/agents/<id>/config.json`.
 
-Minimal example:
+Typical layout:
+
+```text
+~/.manobot/
+└── agents/
+    ├── registry.json
+    ├── assistant/
+    │   ├── config.json
+    │   ├── workspace/
+    │   ├── memory/
+    │   ├── sessions/
+    │   └── logs/runner.log
+    └── coder/
+        ├── config.json
+        ├── workspace/
+        ├── memory/
+        ├── sessions/
+        └── logs/runner.log
+```
+
+Notes:
+
+- `registry.json` is the source of truth for which agents exist and which one is the default.
+- Each standalone config file contains exactly one entry in `agents.list`.
+- `manobot onboard <id>` and `manobot add <id>` refresh missing defaults and sync workspace templates such as `AGENTS.md` and `memory/MEMORY.md`.
+
+Minimal standalone agent config example:
 
 ```json
 {
   "agents": {
     "defaults": {
-      "workspace": "~/.manobot/workspace",
+      "workspace": "~/.manobot/agents/assistant/workspace",
       "model": "anthropic/claude-opus-4-5",
       "maxTokens": 8192
     },
@@ -131,20 +174,11 @@ Minimal example:
       {
         "id": "assistant",
         "default": true,
-        "name": "Main Assistant"
-      },
-      {
-        "id": "coder",
-        "name": "Code Assistant",
-        "workspace": "~/projects",
-        "model": "deepseek/deepseek-coder",
-        "channels": {
-          "telegram": {
-            "enabled": true,
-            "token": "CODER_BOT_TOKEN",
-            "allowFrom": []
-          }
-        }
+        "name": "Main Assistant",
+        "agentDir": "~/.manobot/agents/assistant",
+        "workspace": "~/.manobot/agents/assistant/workspace",
+        "memoryDir": "~/.manobot/agents/assistant/memory",
+        "sessionsDir": "~/.manobot/agents/assistant/sessions"
       }
     ]
   },
@@ -152,45 +186,75 @@ Minimal example:
     "openrouter": {
       "apiKey": "sk-or-v1-..."
     }
+  },
+  "channels": {
+    "feishu": {
+      "enabled": false,
+      "appId": "",
+      "appSecret": "",
+      "allowFrom": [],
+      "groupPolicy": "mention",
+      "replyToMessage": false,
+      "streaming": true
+    }
   }
 }
 ```
 
-### Per-Agent Channels
+### Channel Configuration
 
-Each agent can have its own `channels` configuration with independent credentials:
+For isolated configs, the simplest pattern is to put channel settings in the top-level `channels` section of that agent's own config file.
 
-- If an agent has a `channels` field, it uses that config exclusively (its own bot tokens).
-- If an agent has no `channels` field, it inherits the global `channels` config.
-- Same-token multi-instance is not supported; each agent that needs a channel must use its own bot/token.
+- Top-level `channels` applies to that standalone agent config.
+- `agents.list[0].channels` can still override the sole agent entry when needed.
+- `manobot channels status --agent <id>` and `manobot <id> channels status` show the resolved channel config for one agent.
+- Feishu now supports `groupPolicy`, `replyToMessage`, and `streaming` in the schema used by each isolated config.
 
 ## Agent Isolation
 
 Each agent subprocess has fully isolated:
 
 - **Process**: Separate OS process with its own event loop
-- **Config**: Generated nanobot-format `config.json` under `~/.manobot/agents/<id>/`
+- **Registry**: Registered independently in `~/.manobot/agents/registry.json`
+- **Config**: Standalone `config.json` under `~/.manobot/agents/<id>/`
+- **Logs**: Runner log at `~/.manobot/agents/<id>/logs/runner.log`
 - **Memory**: `~/.manobot/agents/<id>/memory/`
 - **Sessions**: `~/.manobot/agents/<id>/sessions/`
 - **Workspace**: Configurable per-agent
-- **Channels**: Per-agent configuration or inherited from global
+- **Channels**: Per-agent configuration with config-wide defaults inside the same file
 
 ## CLI Reference
 
-### Top-level
+### Common top-level commands
 
 ```bash
-manobot version                           # Show version info
-manobot init [--force]                    # Initialize manobot environment
-manobot status                            # Show supervisor and agent process status
-manobot gateway [--base-port 18791]       # Start supervisor (all agents)
-manobot gateway --agent coder             # Start single agent only
-manobot agent -m "message"                # Chat via HTTP (requires gateway)
-manobot agent --direct -m "message"       # Chat in-process (no gateway needed)
-manobot sync                              # Sync with upstream nanobot
+manobot version
+manobot init
+manobot onboard <id> [--workspace PATH]
+manobot list [--json]
+manobot show <id> [--json]
+manobot add <id> [--name ...] [--workspace ...] [--model ...] [--default]
+manobot default <id>
+manobot delete <id> [--force]
+manobot start <id>
+manobot stop <id>
+manobot restart <id>
+manobot logs <id> [--follow]
+manobot status
+manobot gateway [--base-port 18791]
+manobot gateway --agent coder
+manobot agent [-a <id>] [-m "message"] [--direct]
+manobot <agent-id> -m "message"
+manobot channels status [--agent <id>]
+manobot channels login [--agent <id>]
+manobot <agent-id> channels status
+manobot tui [agent-id]
+manobot sync
 ```
 
-### Agent management
+### Compatibility subcommands
+
+The nested `manobot agents ...` commands remain available:
 
 ```bash
 manobot agents list [--json]
@@ -198,9 +262,10 @@ manobot agents show <id> [--json]
 manobot agents add <id> [--name ...] [--workspace ...] [--model ...] [--default]
 manobot agents delete <id> [--force]
 manobot agents set-default <id>
-manobot agents start <id>                 # Start single agent subprocess
-manobot agents stop <id>                  # Stop agent subprocess
-manobot agents restart <id>               # Restart agent subprocess
+manobot agents start <id>
+manobot agents stop <id>
+manobot agents restart <id>
+manobot agents logs <id> [--follow]
 ```
 
 ## Upstream Sync
@@ -232,7 +297,7 @@ docker run -d --name manobot -v ~/.manobot:/root/.manobot manobot gateway
 
 ## Known Limitations
 
-- Per-agent MCP server configuration is not yet supported (all agents share the global MCP config).
+- Per-agent MCP server configuration is not yet supported.
 - Cron jobs always execute through the default agent.
 
 ## License

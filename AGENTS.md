@@ -4,31 +4,38 @@ This project extends [nanobot](https://github.com/HKUDS/nanobot) with multi-agen
 
 ## Project Structure
 
-```
+```text
 manobot/
-├── nanobot/                  # Original nanobot core (inherited from upstream)
-│   ├── agent/                # Agent loop and tools
+├── agent/                    # Upstream nanobot runtime package used at runtime
+│   ├── agent/                # Agent loop and tool execution
 │   ├── channels/             # Message platform integrations
-│   ├── config/               # Configuration schema (extended)
+│   ├── config/               # Configuration schema and loaders
 │   └── ...
 │
-├── manobot/                  # Multi-agent management layer
-│   ├── agents/               # Agent management
+├── mano/                     # Multi-agent management layer
+│   ├── agents/
+│   │   ├── init.py           # Bootstrap ~/.manobot and the registry
+│   │   ├── onboard.py        # Create/refresh standalone agent configs
+│   │   └── registry.py       # Registered agent IDs + default selection
+│   ├── core/
+│   │   ├── process_manager.py# Agent subprocess lifecycle + runner logs
+│   │   ├── runner.py         # Subprocess entry point (nanobot + HTTP API)
 │   │   ├── scope.py          # Agent scope resolution
-│   │   ├── registry.py       # Agent registry
-│   │   └── pool.py           # Agent pool manager
-│   └── cli/                  # Extended CLI commands
+│   │   └── state.py          # Process state persistence (~/.manobot/state/)
+│   └── cli/
+│       ├── main.py           # Top-level CLI entry point and shortcuts
 │       ├── agents.py         # Agent management commands
-│       └── main.py           # Main CLI entry point
+│       └── channels.py       # Per-agent channel helpers
 │
-└── bridge/                   # WhatsApp bridge (Node.js)
+├── bridge/                   # WhatsApp bridge (Node.js)
+└── nanobot/                  # Upstream repo mirror/reference for sync work
 ```
 
 ---
 
 ## Git Upstream Sync Guide
 
-Manobot is designed to stay in sync with the original nanobot repository while maintaining your custom multi-agent extensions.
+Manobot is designed to stay in sync with the original nanobot repository while maintaining the custom multi-agent layer in `mano/`.
 
 ### Initial Setup
 
@@ -45,11 +52,6 @@ git remote add upstream https://github.com/HKUDS/nanobot.git
 
 # 4. Verify remotes
 git remote -v
-# Should show:
-#   manobot   git@github.com:YOUR_USERNAME/manobot.git (fetch)
-#   manobot   git@github.com:YOUR_USERNAME/manobot.git (push)
-#   upstream  https://github.com/HKUDS/nanobot.git (fetch)
-#   upstream  https://github.com/HKUDS/nanobot.git (push)
 ```
 
 ### Sync with Upstream Nanobot
@@ -67,8 +69,7 @@ git log HEAD..upstream/main --oneline
 git checkout main
 git merge upstream/main
 
-# 4. Resolve conflicts if any (usually in nanobot/ directory)
-# Your manobot/ directory should have no conflicts
+# 4. Resolve conflicts if any
 
 # 5. Push to your manobot remote
 git push manobot main
@@ -76,36 +77,19 @@ git push manobot main
 
 ### Handling Merge Conflicts
 
-Most conflicts will be in files you've modified in `nanobot/`:
+Most conflicts will be in files that adapt nanobot runtime behavior for isolated agents:
 
 | File | Strategy |
 |------|----------|
-| `nanobot/config/schema.py` | Keep your multi-agent extensions, merge upstream changes carefully |
-| `nanobot/**/*.py` (other) | Usually accept upstream changes |
-| `manobot/**/*.py` | No conflicts (your code only) |
-| `pyproject.toml` | Merge both entry points |
-
-**Example conflict resolution:**
-
-```bash
-# After git merge upstream/main shows conflicts
-
-# 1. Check conflicted files
-git status
-
-# 2. Edit conflicted files, keep both upstream changes and your additions
-# Look for <<<<<<< HEAD and >>>>>>> upstream/main markers
-
-# 3. Mark as resolved
-git add <resolved-files>
-
-# 4. Complete merge
-git commit
-```
+| `agent/config/schema.py` | Keep manobot-specific schema fields while merging upstream schema changes |
+| `agent/channels/**/*.py` | Merge carefully when channel behavior diverges from upstream |
+| `mano/**/*.py` | Manobot-only code; keep local behavior |
+| `README.md`, `AGENTS.md`, `_docs/**/*.md` | Update docs whenever CLI or config flow changes |
+| `pyproject.toml` | Preserve both runtime dependencies and the `manobot` entry point |
 
 ### Branch Strategy (Recommended)
 
-```
+```text
 main (your development)
 │
 ├── upstream-sync     # Track upstream/main exactly
@@ -113,67 +97,35 @@ main (your development)
 └── feature/*         # Your feature branches
 ```
 
-**Workflow:**
-
-```bash
-# Create upstream tracking branch
-git checkout -b upstream-sync upstream/main
-
-# When syncing:
-git checkout upstream-sync
-git pull upstream main
-
-# Merge into main
-git checkout main
-git merge upstream-sync
-```
-
 ### Automated Sync Script
 
-Create `scripts/sync-upstream.sh`:
+Use `scripts/sync-upstream.sh`:
 
 ```bash
-#!/bin/bash
-set -e
-
-echo "Fetching upstream nanobot..."
-git fetch upstream
-
-echo "Checking for new commits..."
-NEW_COMMITS=$(git rev-list HEAD..upstream/main --count)
-
-if [ "$NEW_COMMITS" -eq 0 ]; then
-    echo "Already up to date!"
-    exit 0
-fi
-
-echo "Found $NEW_COMMITS new commit(s)"
-echo ""
-echo "New changes:"
-git log HEAD..upstream/main --oneline
-echo ""
-
-read -p "Merge these changes? (y/n) " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    git merge upstream/main
-    echo "Merged successfully!"
-else
-    echo "Merge cancelled."
-fi
+bash scripts/sync-upstream.sh
 ```
 
 ---
 
 ## Multi-Agent Configuration
 
-### Config Schema
+### Registry + Standalone Configs
+
+Manobot no longer generates temporary per-agent configs on startup. Each agent owns a standalone config file:
+
+- Registry: `~/.manobot/agents/registry.json`
+- Config: `~/.manobot/agents/<agent_id>/config.json`
+- Logs: `~/.manobot/agents/<agent_id>/logs/runner.log`
+
+Each standalone config contains exactly one `agents.list` entry.
+
+Example:
 
 ```json
 {
   "agents": {
     "defaults": {
-      "workspace": "~/.manobot/workspace",
+      "workspace": "~/.manobot/agents/assistant/workspace",
       "model": "anthropic/claude-sonnet-4-20250514",
       "maxTokens": 8192
     },
@@ -181,22 +133,25 @@ fi
       {
         "id": "assistant",
         "default": true,
-        "name": "Main Assistant"
-      },
-      {
-        "id": "coder",
-        "name": "Code Assistant",
-        "workspace": "~/projects",
-        "model": "deepseek/deepseek-coder",
-        "channels": {
-          "telegram": {
-            "enabled": true,
-            "token": "CODER_BOT_TOKEN",
-            "allowFrom": []
-          }
-        }
+        "name": "Main Assistant",
+        "agentDir": "~/.manobot/agents/assistant",
+        "workspace": "~/.manobot/agents/assistant/workspace",
+        "memoryDir": "~/.manobot/agents/assistant/memory",
+        "sessionsDir": "~/.manobot/agents/assistant/sessions"
       }
     ]
+  },
+  "providers": {
+    "openrouter": {
+      "apiKey": "sk-or-v1-..."
+    }
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "token": "BOT_TOKEN",
+      "allowFrom": []
+    }
   }
 }
 ```
@@ -204,6 +159,9 @@ fi
 ### Agent Isolation
 
 Each agent has isolated:
+
+- **Config**: `~/.manobot/agents/{agent_id}/config.json`
+- **Logs**: `~/.manobot/agents/{agent_id}/logs/runner.log`
 - **Memory**: `~/.manobot/agents/{agent_id}/memory/`
 - **Sessions**: `~/.manobot/agents/{agent_id}/sessions/`
 - **Workspace**: Configurable per-agent
@@ -214,84 +172,87 @@ Each agent has isolated:
 
 ### Auto-Initialization
 
-When manobot starts, it automatically ensures a default agent exists:
+When manobot starts, it automatically ensures the registry exists and a default agent is selected:
 
 ```bash
-# First run - auto-creates default agent from nanobot config
+# First run - bootstraps ~/.manobot and creates assistant if no agents exist
 manobot gateway
-
-# The default agent inherits nanobot's original configuration:
-# - workspace: from agents.defaults.workspace
-# - model: from agents.defaults.model
-# - All existing nanobot settings preserved
 ```
+
+Behavior:
+
+- If `~/.manobot/agents/registry.json` already exists, manobot uses it.
+- If isolated agent configs already exist on disk, manobot registers them automatically.
+- If no isolated agent exists yet, manobot creates a default `assistant`.
 
 ### Docker Deployment
 
 ```bash
-# Build image
 docker build -t manobot .
 
-# Run with config volume
 docker run -d \
   --name manobot-gateway \
   -p 18790:18790 \
   -v ~/.manobot:/root/.manobot \
   manobot gateway
-
-# Or use docker-compose
-docker-compose up -d
 ```
 
-### Migration from Nanobot
+### Migration from Older Nanobot Setups
 
-If you have an existing nanobot installation:
+Manobot does not auto-import `~/.nanobot/config.json` into isolated agent configs anymore.
+
+If you are moving from an older single-config setup:
 
 ```bash
-# 1. Backup existing config
-cp ~/.nanobot/config.json ~/.nanobot/config.json.backup
-
-# 2. Initialize manobot (auto-migrates config)
 manobot init
-
-# 3. Your existing nanobot becomes the default agent
-manobot agents list
-# Shows: assistant (default) - migrated from nanobot
+manobot onboard assistant
 ```
+
+Then copy provider/channel settings from the old `~/.nanobot/config.json` into `~/.manobot/agents/assistant/config.json` as needed.
 
 ---
 
 ## CLI Commands
 
 ```bash
-# Initialize manobot (auto-creates default agent)
+# Bootstrap
 manobot init
+manobot onboard <agent_id>
 
-# List agents
-manobot agents list
+# Agent management
+manobot list
+manobot show <agent_id>
+manobot add <agent_id> --name "Display Name" --workspace ~/path
+manobot default <agent_id>
+manobot delete <agent_id>
 
-# Show agent details
-manobot agents show <agent_id>
+# Runtime control
+manobot start <agent_id>
+manobot stop <agent_id>
+manobot restart <agent_id>
+manobot logs <agent_id> --follow
+manobot status
+manobot gateway --agent <agent_id>
 
-# Add new agent
-manobot agents add <agent_id> --name "Display Name" --workspace ~/path
+# Chat shortcuts
+manobot agent --agent coder -m "hi"
+manobot coder -m "hi"
+manobot tui
 
-# Delete agent
-manobot agents delete <agent_id>
-
-# Set default agent
-manobot agents set-default <agent_id>
-
-# Start gateway
-manobot gateway --port 18790
+# Per-agent channel helpers
+manobot channels status --agent coder
+manobot coder channels status
+manobot channels login --agent coder
 ```
+
+Nested compatibility commands under `manobot agents ...` still exist, including `manobot agents set-default`.
 
 ---
 
 ## Development Guidelines
 
-- **Do not modify** files in `nanobot/` directly unless necessary
-- All multi-agent extensions go in `manobot/`
-- Maintain backwards compatibility with nanobot config format
-- Use `nanobot` CLI for single-agent mode, `manobot` CLI for multi-agent
-- Run `scripts/sync-upstream.sh` regularly to stay updated
+- Prefer putting multi-agent behavior in `mano/`
+- Modify `agent/` only when the shared nanobot runtime itself needs adaptation for isolated agents
+- Keep the standalone config model intact; do not reintroduce generated per-agent config files
+- Update `README.md`, `AGENTS.md`, and `_docs/` whenever CLI flows, config paths, or runtime directories change
+- Use `nanobot/` as an upstream reference during sync work; runtime imports come from `agent/` and `mano/`

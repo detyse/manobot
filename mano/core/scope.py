@@ -62,22 +62,6 @@ def list_agent_entries(config: Config) -> list[AgentEntryConfig]:
     return [entry for entry in config.agents.agent_list if entry and entry.id]
 
 
-def list_agent_ids(config: Config) -> list[str]:
-    """List normalized configured agent IDs."""
-    entries = list_agent_entries(config)
-    if not entries:
-        return [DEFAULT_AGENT_ID]
-
-    seen: set[str] = set()
-    agent_ids: list[str] = []
-    for entry in entries:
-        agent_id = normalize_agent_id(entry.id)
-        if agent_id not in seen:
-            seen.add(agent_id)
-            agent_ids.append(agent_id)
-    return agent_ids or [DEFAULT_AGENT_ID]
-
-
 def resolve_default_agent_id(config: Config) -> str:
     """Resolve the default agent ID."""
     global _default_warned
@@ -105,7 +89,7 @@ def resolve_agent_entry(config: Config, agent_id: str) -> AgentEntryConfig | Non
 
 
 def resolve_agent_channels(config: Config, agent_id: str) -> ChannelsConfig:
-    """Return the per-agent channels config, falling back to global."""
+    """Return the agent's channels config, falling back to config-wide defaults."""
     entry = resolve_agent_entry(config, agent_id)
     if entry and entry.channels is not None:
         return entry.channels
@@ -113,7 +97,7 @@ def resolve_agent_channels(config: Config, agent_id: str) -> ChannelsConfig:
 
 
 def resolve_agent_providers(config: Config, agent_id: str) -> ProvidersConfig:
-    """Return the per-agent providers config, falling back to global."""
+    """Return the agent's providers config, falling back to config-wide defaults."""
     entry = resolve_agent_entry(config, agent_id)
     if entry and entry.providers is not None:
         return entry.providers
@@ -219,7 +203,7 @@ def build_session_key(
 
 
 def parse_session_key(session_key: str) -> dict[str, str | None]:
-    """Parse multi-agent and legacy session keys."""
+    """Parse current and older session-key layouts."""
     if session_key.startswith("agent:"):
         parts = session_key[len("agent:"):].split(":")
         if len(parts) >= 4:

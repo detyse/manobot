@@ -11,10 +11,11 @@ from agent.cron.types import CronSchedule
 class CronTool(Tool):
     """Tool to schedule reminders and recurring tasks."""
 
-    def __init__(self, cron_service: CronService):
+    def __init__(self, cron_service: CronService, default_timezone: str | None = None):
         self._cron = cron_service
         self._channel = ""
         self._chat_id = ""
+        self._default_timezone = default_timezone
         self._in_cron_context: ContextVar[bool] = ContextVar("cron_in_context", default=False)
 
     def set_context(self, channel: str, chat_id: str) -> None:
@@ -105,6 +106,7 @@ class CronTool(Tool):
             return "Error: no session context (channel/chat_id)"
         if tz and not cron_expr:
             return "Error: tz can only be used with cron_expr"
+        tz = tz or self._default_timezone
         if tz:
             from zoneinfo import ZoneInfo
 
@@ -156,4 +158,3 @@ class CronTool(Tool):
         if self._cron.remove_job(job_id):
             return f"Removed job {job_id}"
         return f"Job {job_id} not found"
-

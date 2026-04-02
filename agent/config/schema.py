@@ -43,6 +43,9 @@ class FeishuConfig(Base):
     verification_token: str = ""  # Verification Token for event subscription (optional)
     allow_from: list[str] = Field(default_factory=list)  # Allowed user open_ids
     react_emoji: str = "THUMBSUP"  # Emoji type for message reactions (e.g. THUMBSUP, OK, DONE, SMILE)
+    group_policy: Literal["open", "mention"] = "mention"
+    reply_to_message: bool = False  # If True, bot replies quote the user's original message
+    streaming: bool = True
 
 
 class DingTalkConfig(Base):

@@ -32,6 +32,7 @@ class AgentProcessState:
     status: str = "starting"  # starting | running | stopping | stopped | crashed
     started_at: str = ""  # ISO format
     config_path: str = ""
+    log_path: str = ""
     restart_count: int = 0
     error_message: str | None = None
 

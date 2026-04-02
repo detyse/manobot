@@ -1,23 +1,30 @@
-"""CLI commands for multi-agent management.
-
-Provides commands to list, add, delete, and manage agents.
-"""
+"""CLI commands for multi-agent management."""
 
 from __future__ import annotations
 
+import asyncio
+from collections import deque
 import json
+import time
+from pathlib import Path
 from typing import Optional
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from mano.core.scope import (
-    build_agent_scope,
-    list_agent_ids,
-    normalize_agent_id,
-    resolve_default_agent_id,
+from mano.agents.init import initialize_manobot
+from mano.agents.onboard import onboard_agent
+from mano.agents.registry import (
+    get_agent_config_path,
+    is_registered,
+    list_registered_agent_ids,
+    load_registered_agent_config,
+    resolve_default_registered_agent_id,
+    set_default_registered_agent,
+    unregister_agent,
 )
+from mano.core.scope import build_agent_scope, normalize_agent_id
 
 console = Console()
 agents_app = typer.Typer(
@@ -25,109 +32,156 @@ agents_app = typer.Typer(
     help="""Manage multiple AI agents
 
 Commands to create, configure, and manage multiple agents with isolated
-workspaces, memories, and session histories.
-
-Common workflows:
-  • manobot agents list              # View all agents
-  • manobot agents add coder --name "Code Assistant"   # Add new agent
-  • manobot agents show coder        # View agent details
-  • manobot agents set-default coder # Set default agent
+workspaces, memories, session histories, and standalone configs.
 """,
     no_args_is_help=True,
     rich_markup_mode="rich",
 )
 
 
-def _load_config():
-    """Load configuration."""
-    from agent.config.loader import load_config
-    return load_config()
+def _load_scope(agent_id: str):
+    """Load one registered agent's config and resolved scope."""
+    config = load_registered_agent_config(agent_id)
+    scope = build_agent_scope(config, agent_id)
+    if scope is None:
+        raise RuntimeError(f"Cannot resolve scope for agent '{agent_id}'")
+    return config, scope
+
+
+def _resolve_agent_log_path(agent_id: str) -> Path:
+    """Resolve the runner log path for one registered agent."""
+    from mano.core.state import load_state
+
+    normalized_id = normalize_agent_id(agent_id)
+    if not is_registered(normalized_id):
+        console.print(f"[red]Agent '{agent_id}' not found[/red]")
+        raise typer.Exit(1)
+
+    runtime_state = load_state().agents.get(normalized_id)
+    if runtime_state and runtime_state.log_path:
+        return Path(runtime_state.log_path).expanduser()
+
+    return get_agent_config_path(normalized_id).parent / "logs" / "runner.log"
+
+
+def _tail_log_lines(log_path: Path, line_count: int = 100) -> list[str]:
+    """Read the last N lines from a log file."""
+    with log_path.open("r", encoding="utf-8", errors="replace") as handle:
+        return list(deque(handle, maxlen=line_count))
+
+
+def _follow_log_file(log_path: Path) -> None:
+    """Stream new log lines until interrupted."""
+    with log_path.open("r", encoding="utf-8", errors="replace") as handle:
+        handle.seek(0, 2)
+        try:
+            while True:
+                line = handle.readline()
+                if line:
+                    typer.echo(line, nl=False)
+                    continue
+                time.sleep(0.25)
+        except KeyboardInterrupt:
+            raise typer.Exit(0) from None
 
 
 @agents_app.command("list")
 def list_agents(
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON instead of table"),
 ):
-    """List all configured agents.
+    """List all configured agents."""
+    initialize_manobot()
 
-    Displays a table of all agents with their IDs, names, models,
-    workspaces, and default status. Use --json for programmatic access.
-
-    Examples:
-        manobot agents list         # Display as formatted table
-        manobot agents list --json  # Output as JSON
-    """
-    config = _load_config()
-
-    agent_ids = list_agent_ids(config)
-    default_id = resolve_default_agent_id(config)
+    agent_ids = list_registered_agent_ids()
+    default_id = resolve_default_registered_agent_id()
 
     if json_output:
         agents_data = []
         for agent_id in agent_ids:
-            scope = build_agent_scope(config, agent_id)
-            if scope:
-                agents_data.append({
-                    "id": scope.agent_id,
-                    "name": scope.name,
-                    "model": scope.model,
-                    "workspace": str(scope.workspace),
-                    "is_default": agent_id == default_id,
-                })
-        console.print(json.dumps(agents_data, indent=2, default=str))
+            _, scope = _load_scope(agent_id)
+            agents_data.append({
+                "id": scope.agent_id,
+                "name": scope.name,
+                "model": scope.model,
+                "workspace": str(scope.workspace),
+                "config_path": str(get_agent_config_path(agent_id)),
+                "is_default": agent_id == default_id,
+            })
+        typer.echo(json.dumps(agents_data, indent=2, default=str))
         return
 
-    # Rich table output
     table = Table(title="Configured Agents")
     table.add_column("ID", style="cyan")
     table.add_column("Name", style="green")
     table.add_column("Model", style="yellow")
-    table.add_column("Workspace", style="blue")
+    table.add_column("Config", style="blue", overflow="fold")
     table.add_column("Default", style="magenta")
 
     for agent_id in agent_ids:
-        scope = build_agent_scope(config, agent_id)
-        if scope:
-            is_default = "✓" if agent_id == default_id else ""
-            table.add_row(
-                scope.agent_id,
-                scope.name or "-",
-                scope.model or "-",
-                str(scope.workspace)[:40],
-                is_default,
-            )
+        _, scope = _load_scope(agent_id)
+        table.add_row(
+            scope.agent_id,
+            scope.name or "-",
+            scope.model or "-",
+            str(get_agent_config_path(agent_id)),
+            "✓" if agent_id == default_id else "",
+        )
 
     console.print(table)
+    if agent_ids:
+        console.print("\n[bold]Config Paths:[/bold]")
+        for agent_id in agent_ids:
+            _, scope = _load_scope(agent_id)
+            console.print(f"  {scope.agent_id}: {get_agent_config_path(agent_id)}", soft_wrap=True)
     console.print(f"\nTotal: {len(agent_ids)} agent(s)")
+
+
+@agents_app.command("logs")
+def logs_agent_cmd(
+    agent_id: str = typer.Argument(..., help="Agent ID whose log should be shown"),
+    follow: bool = typer.Option(False, "--follow", "-f", help="Follow the log output"),
+):
+    """Show an agent's runner log."""
+    initialize_manobot()
+
+    log_path = _resolve_agent_log_path(agent_id)
+    if not log_path.exists():
+        console.print(f"[red]Log file not found for agent '{agent_id}'[/red]")
+        console.print(f"Expected: {log_path}", soft_wrap=True)
+        console.print("Start the agent first to create the runner log.")
+        raise typer.Exit(1)
+
+    console.print(f"[bold]Log:[/bold] {log_path}", soft_wrap=True)
+
+    tail_lines = _tail_log_lines(log_path)
+    if tail_lines:
+        typer.echo("".join(tail_lines), nl=not tail_lines[-1].endswith("\n"))
+    else:
+        console.print("[dim]Log file is empty.[/dim]")
+
+    if follow:
+        console.print("\n[dim]Following log output. Press Ctrl+C to stop.[/dim]")
+        _follow_log_file(log_path)
 
 
 @agents_app.command("show")
 def show_agent(
-    agent_id: str = typer.Argument(..., help="Agent ID to display (e.g., 'assistant', 'coder')"),
+    agent_id: str = typer.Argument(..., help="Agent ID to display"),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON instead of formatted text"),
 ):
-    """Show detailed information about a specific agent.
-
-    Displays comprehensive details including status, config path,
-    workspace, provider, model, and identity settings.
-
-    Examples:
-        manobot agents show assistant       # Show details for 'assistant'
-        manobot agents show coder --json    # Output as JSON
-    """
-    from agent.config.loader import get_config_path
-
-    config = _load_config()
-    config_path = get_config_path()
+    """Show detailed information about a specific agent."""
+    initialize_manobot()
+    from mano.core.state import load_state
 
     normalized_id = normalize_agent_id(agent_id)
-    scope = build_agent_scope(config, normalized_id)
-
-    if not scope:
+    if not is_registered(normalized_id):
         console.print(f"[red]Agent '{agent_id}' not found[/red]")
         raise typer.Exit(1)
 
-    # Check status based on directory existence
+    config_path = get_agent_config_path(normalized_id)
+    _, scope = _load_scope(normalized_id)
+    runtime_state = load_state().agents.get(normalized_id)
+
     workspace_exists = scope.workspace.exists()
     memory_exists = scope.memory_dir.exists()
     sessions_exists = scope.sessions_dir.exists()
@@ -138,7 +192,6 @@ def show_agent(
     else:
         status = "[red]not initialized[/red]"
 
-    # Build agent config dict for output
     agent_config = {
         "id": scope.agent_id,
         "name": scope.name,
@@ -152,13 +205,18 @@ def show_agent(
         "workspace_path": str(scope.workspace),
         "memory_path": str(scope.memory_dir),
         "sessions_path": str(scope.sessions_dir),
-        "is_default": normalized_id == resolve_default_agent_id(config),
+        "is_default": normalized_id == resolve_default_registered_agent_id(),
         "skills": scope.skills,
         "identity": scope.identity,
+        "runtime_status": runtime_state.status if runtime_state else None,
+        "pid": runtime_state.pid if runtime_state else None,
+        "port": runtime_state.port if runtime_state else None,
+        "error_message": runtime_state.error_message if runtime_state else None,
+        "log_path": runtime_state.log_path if runtime_state else None,
     }
 
     if json_output:
-        console.print(json.dumps(agent_config, indent=2, default=str))
+        typer.echo(json.dumps(agent_config, indent=2, default=str))
         return
 
     console.print(f"\n[bold cyan]Agent: {normalized_id}[/bold cyan]")
@@ -176,6 +234,15 @@ def show_agent(
     console.print(f"  Workspace:  {agent_config['workspace_path']} {'[green]✓[/green]' if workspace_exists else '[red]✗[/red]'}")
     console.print(f"  Memory:     {agent_config['memory_path']} {'[green]✓[/green]' if memory_exists else '[red]✗[/red]'}")
     console.print(f"  Sessions:   {agent_config['sessions_path']} {'[green]✓[/green]' if sessions_exists else '[dim]✗[/dim]'}")
+    if runtime_state:
+        console.print("\n[bold]Runtime:[/bold]")
+        console.print(f"  Status:     {agent_config['runtime_status']}")
+        console.print(f"  PID:        {agent_config['pid']}")
+        console.print(f"  Port:       {agent_config['port']}")
+        if agent_config.get("error_message"):
+            console.print(f"  Last Error: {agent_config['error_message']}")
+        if agent_config.get("log_path"):
+            console.print(f"  Log:        {agent_config['log_path']}")
 
     if agent_config.get("skills"):
         console.print(f"\n[bold]Skills:[/bold] {', '.join(agent_config['skills'])}")
@@ -191,203 +258,60 @@ def show_agent(
 
 @agents_app.command("add")
 def add_agent(
-    agent_id: str = typer.Argument(..., help="Unique agent ID (alphanumeric with hyphens, e.g., 'coder', 'writer-v2')"),
+    agent_id: str = typer.Argument(..., help="Unique agent ID"),
     name: Optional[str] = typer.Option(None, "--name", "-n", help="Display name for the agent"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Custom workspace directory path"),
-    model: Optional[str] = typer.Option(None, "--model", "-m", help="LLM model to use (e.g., 'anthropic/claude-sonnet-4-20250514')"),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="LLM model to use"),
     default: bool = typer.Option(False, "--default", "-d", help="Set as the default agent"),
-    no_local_config: bool = typer.Option(False, "--no-local-config", help="Don't create a separate config file for this agent"),
 ):
-    """Add a new agent to the configuration.
+    """Add a new independent agent or update an existing one."""
+    initialize_manobot()
 
-    Creates a new agent with its own isolated workspace, memory, and sessions.
-    The agent ID must be unique and can only contain alphanumeric characters
-    and hyphens.
-
-    By default, a separate config file is created at ~/.manobot/agents/{agent_id}/config.json
-    for agent-specific settings. Use --no-local-config to skip this.
-
-    Note: This command modifies the config file. You need to restart
-    the gateway for changes to take effect.
-
-    Examples:
-        manobot agents add coder --name "Code Assistant"
-        manobot agents add writer --model "openai/gpt-4o" --workspace ~/writing
-        manobot agents add assistant-v2 --default
-    """
-    from agent.config.loader import get_agent_config_path, get_config_path
-
-    config = _load_config()
     normalized_id = normalize_agent_id(agent_id)
+    existing = is_registered(normalized_id)
+    mode = "refresh"
 
-    # Check if agent already exists
-    existing_ids = list_agent_ids(config)
-    existing_agent = None
-    existing_idx = None
-
-    if normalized_id in existing_ids and normalized_id != "default":
-        # Agent exists - show interactive prompt
+    if existing:
         console.print(f"Agent '{normalized_id}' already exists")
-        existing_scope = build_agent_scope(config, normalized_id)
-        if existing_scope:
-            console.print(f"  Current name: {existing_scope.name or '-'}")
-            console.print(f"  Current model: {existing_scope.model or '-'}")
-            console.print(f"  Current workspace: {str(existing_scope.workspace) or '-'}")
+        _, existing_scope = _load_scope(normalized_id)
+        console.print(f"  Current name: {existing_scope.name or '-'}")
+        console.print(f"  Current model: {existing_scope.model or '-'}")
+        console.print(f"  Current workspace: {existing_scope.workspace}")
         console.print("")
-        console.print("  [bold]y[/bold] = overwrite with new values (existing config will be replaced)")
-        console.print("  [bold]N[/bold] = update config, keeping existing values and merging new fields")
+        console.print("  [bold]y[/bold] = reset to defaults (existing values will be overwritten)")
+        console.print("  [bold]N[/bold] = refresh config, keeping existing values and merging new fields")
         console.print("")
 
         choice = typer.prompt("Overwrite?", default="N", show_default=False)
-
         if choice.lower() == "y":
-            # Overwrite mode - will replace the existing agent
-            existing_agent = "overwrite"
-        elif choice.lower() == "n":
-            # Update mode - merge new values with existing
-            existing_agent = "update"
-        else:
+            mode = "reset"
+        elif choice.lower() != "n":
             console.print("[yellow]Cancelled[/yellow]")
             raise typer.Exit(0)
 
-    # Load and modify config file
-    config_path = get_config_path()
-    if not config_path.exists():
-        console.print("[red]Config file not found[/red]")
-        raise typer.Exit(1)
+    result = onboard_agent(
+        normalized_id,
+        workspace=workspace,
+        mode=mode,
+        name=name,
+        model=model,
+        set_default=True if default else None,
+    )
 
-    with open(config_path, "r") as f:
-        config_data = json.load(f)
-
-    # Ensure agents.list exists
-    if "agents" not in config_data:
-        config_data["agents"] = {}
-    if "list" not in config_data["agents"]:
-        config_data["agents"]["list"] = []
-
-    # Find existing agent index if updating
-    for idx, agent in enumerate(config_data["agents"]["list"]):
-        if normalize_agent_id(agent.get("id", "")) == normalized_id:
-            existing_idx = idx
-            break
-
-    # Build new agent entry
-    if existing_agent == "update" and existing_idx is not None:
-        # Update mode: merge with existing config
-        new_agent = config_data["agents"]["list"][existing_idx].copy()
-        if name:
-            new_agent["name"] = name
-        if workspace:
-            new_agent["workspace"] = workspace
-        if model:
-            new_agent["model"] = model
-        if default:
-            new_agent["default"] = True
-    else:
-        # New or overwrite mode: start fresh
-        new_agent = {
-            "id": normalized_id,
-        }
-        if name:
-            new_agent["name"] = name
-        if workspace:
-            new_agent["workspace"] = workspace
-        if model:
-            new_agent["model"] = model
-        if default:
-            new_agent["default"] = True
-
-    # If setting as default, unset other defaults
-    if default:
-        for agent in config_data["agents"]["list"]:
-            agent["default"] = False
-
-    # Update or append agent
-    if existing_idx is not None:
-        config_data["agents"]["list"][existing_idx] = new_agent
-    else:
-        config_data["agents"]["list"].append(new_agent)
-
-    # Write back
-    with open(config_path, "w") as f:
-        json.dump(config_data, f, indent=2)
-
-    # Create per-agent config file (unless disabled)
-    agent_config_path = get_agent_config_path(normalized_id)
-    if not no_local_config and not existing_agent:
-        # Only create for new agents, not updates
-        try:
-            agent_config_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Build minimal agent-specific config
-            agent_config = {
-                "agents": {
-                    "list": [
-                        {
-                            "id": normalized_id,
-                            "name": name,
-                            "workspace": workspace,
-                            "model": model,
-                        }
-                    ]
-                }
-            }
-            
-            # Remove None values
-            agent_config["agents"]["list"][0] = {
-                k: v for k, v in agent_config["agents"]["list"][0].items() 
-                if v is not None
-            }
-            
-            # Add default flag if set
-            if default:
-                agent_config["agents"]["list"][0]["default"] = True
-            
-            with open(agent_config_path, "w", encoding="utf-8") as f:
-                json.dump(agent_config, f, indent=2, ensure_ascii=False)
-            
-            console.print(f"[dim]Created agent config: {agent_config_path}[/dim]")
-        except Exception as e:
-            console.print(f"[yellow]Warning: Failed to create agent config file: {e}[/yellow]")
-
-    if existing_agent:
-        # Update/overwrite mode - brief output
-        action = "Updated" if existing_agent == "update" else "Replaced"
+    if existing:
+        action = "Reset" if mode == "reset" else "Updated"
         console.print(f"[green]✓[/green] {action} agent: {normalized_id}")
-        if name:
-            console.print(f"  Name: {name}")
-        if workspace:
-            console.print(f"  Workspace: {workspace}")
-        if model:
-            console.print(f"  Model: {model}")
-        if default:
-            console.print("  Set as default")
-        console.print("\n[yellow]Note: Restart the gateway for changes to take effect[/yellow]")
     else:
-        # New agent - show welcome message
-        console.print(f"[green]✓[/green] Agent '{normalized_id}' added to config")
-        console.print("")
-        console.print(f"[bold]🤖 Agent '{normalized_id}' is ready![/bold]")
-        console.print("")
-        console.print("[bold]Configuration:[/bold]")
-        console.print(f"  ID:        {normalized_id}")
-        console.print(f"  Name:      {name or '(not set)'}")
-        console.print(f"  Model:     {model or '(uses default)'}")
-        console.print(f"  Workspace: {workspace or '(uses default)'}")
-        console.print(f"  Default:   {'Yes' if default else 'No'}")
-        if not no_local_config:
-            console.print(f"  Config:    {agent_config_path}")
-        console.print("")
-        console.print("[bold]Next steps:[/bold]")
-        console.print(f"  1. View agent details: manobot agents show {normalized_id}")
-        if not no_local_config:
-            console.print(f"  2. Edit agent config:  {agent_config_path}")
-            console.print("     (add channels, providers, tools, etc.)")
-        else:
-            console.print("  2. Configure channels in the global config")
-        console.print("  3. Start gateway:      manobot gateway")
-        console.print("")
-        console.print("[dim]Docs: https://github.com/HKUDS/manobot[/dim]")
+        console.print(f"[green]✓[/green] Added agent: {normalized_id}")
+
+    console.print(f"  Config:    {result.agent_config_path}")
+    console.print(f"  Workspace: {result.scope.workspace}")
+    if default:
+        console.print("  Default:   Yes")
+
+    console.print("\n[bold]Next steps:[/bold]")
+    console.print(f"  1. View agent details: manobot show {normalized_id}")
+    console.print("  2. Start gateway:      manobot gateway")
 
 
 @agents_app.command("delete")
@@ -395,94 +319,38 @@ def delete_agent(
     agent_id: str = typer.Argument(..., help="Agent ID to delete"),
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation prompt"),
 ):
-    """Delete an agent from the configuration.
+    """Delete an agent from the registry."""
+    initialize_manobot()
 
-    Removes the agent from the configuration file. This action cannot be undone.
-    The agent's workspace, memory, and session files are NOT deleted - you must
-    remove them manually if needed.
-
-    Note: You need to restart the gateway for changes to take effect.
-
-    Examples:
-        manobot agents delete old-agent          # Delete with confirmation
-        manobot agents delete old-agent --force  # Delete without confirmation
-    """
-    from agent.config.loader import get_config_path
-
-    config = _load_config()
     normalized_id = normalize_agent_id(agent_id)
-
-    # Check if agent exists
-    scope = build_agent_scope(config, normalized_id)
-    if not scope:
+    if not is_registered(normalized_id):
         console.print(f"[red]Agent '{agent_id}' not found[/red]")
         raise typer.Exit(1)
 
-    # Confirm deletion
     if not force:
         confirm = typer.confirm(f"Delete agent '{normalized_id}'?")
         if not confirm:
             console.print("Cancelled")
             raise typer.Exit(0)
 
-    # Load and modify config file
-    config_path = get_config_path()
-    with open(config_path, "r") as f:
-        config_data = json.load(f)
-
-    # Remove agent from list
-    if "agents" in config_data and "list" in config_data["agents"]:
-        config_data["agents"]["list"] = [
-            a for a in config_data["agents"]["list"]
-            if normalize_agent_id(a.get("id", "")) != normalized_id
-        ]
-
-    # Write back
-    with open(config_path, "w") as f:
-        json.dump(config_data, f, indent=2)
-
+    unregister_agent(normalized_id)
     console.print(f"[green]✓[/green] Deleted agent: {normalized_id}")
-    console.print("\n[yellow]Note: Restart the gateway for changes to take effect[/yellow]")
+    console.print("Standalone files were left on disk.")
 
 
 @agents_app.command("set-default")
 def set_default(
     agent_id: str = typer.Argument(..., help="Agent ID to set as default"),
 ):
-    """Set an agent as the default.
+    """Set an agent as the default."""
+    initialize_manobot()
 
-    The default agent is used when no specific agent is requested.
-    There can only be one default agent.
-
-    Examples:
-        manobot agents set-default assistant
-        manobot agents set-default coder
-    """
-    from agent.config.loader import get_config_path
-
-    config = _load_config()
     normalized_id = normalize_agent_id(agent_id)
-
-    # Check if agent exists
-    if normalized_id not in list_agent_ids(config):
+    if not is_registered(normalized_id):
         console.print(f"[red]Agent '{agent_id}' not found[/red]")
         raise typer.Exit(1)
 
-    # Load and modify config file
-    config_path = get_config_path()
-    with open(config_path, "r") as f:
-        config_data = json.load(f)
-
-    # Update default flags
-    if "agents" in config_data and "list" in config_data["agents"]:
-        for agent in config_data["agents"]["list"]:
-            agent_id_norm = normalize_agent_id(agent.get("id", ""))
-            agent["default"] = agent_id_norm == normalized_id
-
-    # Write back
-    with open(config_path, "w") as f:
-        json.dump(config_data, f, indent=2)
-
+    set_default_registered_agent(normalized_id)
     console.print(f"[green]✓[/green] Set default agent: {normalized_id}")
 
 
@@ -491,38 +359,28 @@ def start_agent_cmd(
     agent_id: str = typer.Argument(..., help="Agent ID to start"),
     base_port: int = typer.Option(18791, "--base-port", "-p", help="Base port for agent subprocess"),
 ):
-    """Start a single agent subprocess.
-
-    Starts the specified agent as an isolated subprocess with its own
-    HTTP API, channels, and memory. The agent will be assigned a port
-    from the base port range.
-
-    Note: For production use, prefer 'manobot gateway' which starts all
-    agents with health monitoring. This command is for manual control.
-
-    Examples:
-        manobot agents start coder
-        manobot agents start assistant --base-port 19000
-    """
-    import asyncio
-
+    """Start a single agent subprocess."""
     from mano.core.process_manager import ProcessManager
 
-    config = _load_config()
+    initialize_manobot()
     normalized_id = normalize_agent_id(agent_id)
 
-    if normalized_id not in list_agent_ids(config):
+    if not is_registered(normalized_id):
         console.print(f"[red]Agent '{agent_id}' not found[/red]")
         raise typer.Exit(1)
 
-    manager = ProcessManager(config, base_port=base_port)
+    manager = ProcessManager(base_port=base_port)
 
     async def _start():
         result = await manager.start_agent(normalized_id)
         if result.status == "running":
             console.print(f"[green]OK[/green] Agent '{normalized_id}' running on port {result.port} (pid={result.pid})")
+            if result.log_path:
+                console.print(f"[dim]log: {result.log_path}[/dim]", soft_wrap=True)
         else:
             console.print(f"[red]FAIL[/red] Agent '{normalized_id}': {result.error_message}")
+            if result.log_path:
+                console.print(f"[dim]log: {result.log_path}[/dim]", soft_wrap=True)
             raise typer.Exit(1)
 
     asyncio.run(_start())
@@ -533,22 +391,12 @@ def stop_agent_cmd(
     agent_id: str = typer.Argument(..., help="Agent ID to stop"),
     timeout: float = typer.Option(10.0, "--timeout", "-t", help="Shutdown timeout in seconds"),
 ):
-    """Stop a running agent subprocess.
-
-    Sends a graceful shutdown request via HTTP, then falls back to
-    SIGTERM/SIGKILL if the agent doesn't stop in time.
-
-    Examples:
-        manobot agents stop coder
-        manobot agents stop assistant --timeout 30
-    """
-    import asyncio
-
+    """Stop a running agent subprocess."""
     from mano.core.process_manager import ProcessManager
 
-    config = _load_config()
+    initialize_manobot()
     normalized_id = normalize_agent_id(agent_id)
-    manager = ProcessManager(config)
+    manager = ProcessManager()
 
     async def _stop():
         stopped = await manager.stop_agent(normalized_id, timeout=timeout)
@@ -565,33 +413,29 @@ def restart_agent_cmd(
     agent_id: str = typer.Argument(..., help="Agent ID to restart"),
     base_port: int = typer.Option(18791, "--base-port", "-p", help="Base port for agent subprocess"),
 ):
-    """Restart a running agent subprocess.
-
-    Stops and then starts the agent. Useful after configuration changes.
-
-    Examples:
-        manobot agents restart coder
-    """
-    import asyncio
-
+    """Restart a running agent subprocess."""
     from mano.core.process_manager import ProcessManager
 
-    config = _load_config()
+    initialize_manobot()
     normalized_id = normalize_agent_id(agent_id)
 
-    if normalized_id not in list_agent_ids(config):
+    if not is_registered(normalized_id):
         console.print(f"[red]Agent '{agent_id}' not found[/red]")
         raise typer.Exit(1)
 
-    manager = ProcessManager(config, base_port=base_port)
+    manager = ProcessManager(base_port=base_port)
 
     async def _restart():
         console.print(f"Restarting agent '{normalized_id}'...")
         result = await manager.restart_agent(normalized_id)
         if result.status == "running":
             console.print(f"[green]OK[/green] Agent '{normalized_id}' running on port {result.port} (pid={result.pid})")
+            if result.log_path:
+                console.print(f"[dim]log: {result.log_path}[/dim]", soft_wrap=True)
         else:
             console.print(f"[red]FAIL[/red] Agent '{normalized_id}': {result.error_message}")
+            if result.log_path:
+                console.print(f"[dim]log: {result.log_path}[/dim]", soft_wrap=True)
             raise typer.Exit(1)
 
     asyncio.run(_restart())
