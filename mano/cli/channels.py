@@ -14,12 +14,31 @@ console = Console()
 channels_app = typer.Typer(help="Manage channels")
 
 
-@channels_app.command("status")
-def channels_status():
-    """Show channel status and configuration."""
-    from agent.config.loader import load_config
+def _load_target_agent_config(agent_id: str | None):
+    """Load the standalone config for one agent."""
+    from mano.agents.init import initialize_manobot
+    from mano.agents.registry import (
+        list_registered_agent_ids,
+        load_registered_agent_config,
+        resolve_default_registered_agent_id,
+    )
+    from mano.core.scope import normalize_agent_id
 
-    config = load_config()
+    initialize_manobot()
+    configured = list_registered_agent_ids()
+    target_id = normalize_agent_id(agent_id) if agent_id else resolve_default_registered_agent_id()
+    if target_id not in configured:
+        console.print(f"[red]Agent '{agent_id or target_id}' not found[/red]")
+        raise typer.Exit(1)
+    return target_id, load_registered_agent_config(target_id)
+
+
+@channels_app.command("status")
+def channels_status(
+    agent_id: str | None = typer.Option(None, "--agent", "-a", help="Show channels for one agent"),
+):
+    """Show channel status and configuration."""
+    _, config = _load_target_agent_config(agent_id)
 
     table = Table(title="Channel Status")
     table.add_column("Channel", style="cyan")
@@ -174,14 +193,14 @@ def _get_bridge_dir() -> Path:
 
 
 @channels_app.command("login")
-def channels_login():
+def channels_login(
+    agent_id: str | None = typer.Option(None, "--agent", "-a", help="Run bridge login for one agent"),
+):
     """Link device via QR code (WhatsApp bridge)."""
-    from agent.config.loader import load_config
-
-    config = load_config()
+    target_id, config = _load_target_agent_config(agent_id)
     bridge_dir = _get_bridge_dir()
 
-    console.print("🤖 Starting bridge...")
+    console.print(f"🤖 Starting bridge for '{target_id}'...")
     console.print("Scan the QR code to connect.\n")
 
     env = {**os.environ}

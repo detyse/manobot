@@ -281,6 +281,7 @@ class MemoryConsolidator:
         context_window_tokens: int,
         build_messages: Callable[..., list[dict[str, Any]]],
         get_tool_definitions: Callable[[], list[dict[str, Any]]],
+        max_completion_tokens: int | None = None,
         memory_dir: Path | None = None,
     ):
         self.store = MemoryStore(workspace, memory_dir=memory_dir)
@@ -290,6 +291,7 @@ class MemoryConsolidator:
         self.context_window_tokens = context_window_tokens
         self._build_messages = build_messages
         self._get_tool_definitions = get_tool_definitions
+        self.max_completion_tokens = max_completion_tokens
         self._locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
 
     def get_lock(self, session_key: str) -> asyncio.Lock:

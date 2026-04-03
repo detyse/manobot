@@ -49,6 +49,15 @@ class BaseChannel(ABC):
             logger.warning("{}: audio transcription failed: {}", self.name, e)
             return ""
 
+    async def login(self, force: bool = False) -> bool:
+        """
+        Perform channel-specific interactive login if supported.
+
+        Returns True by default so channels without an explicit login flow can
+        be treated as ready.
+        """
+        return True
+
     @abstractmethod
     async def start(self) -> None:
         """
@@ -73,8 +82,22 @@ class BaseChannel(ABC):
 
         Args:
             msg: The message to send.
+
+        Implementations should raise on delivery failure so the channel manager
+        can apply retries in one place.
         """
         pass
+
+    async def send_delta(self, chat_id: str, delta: str, metadata: dict[str, Any] | None = None) -> None:
+        """Deliver a streaming text chunk."""
+        raise NotImplementedError
+
+    @property
+    def supports_streaming(self) -> bool:
+        """Return True when channel config enables streaming and send_delta is implemented."""
+        cfg = self.config
+        streaming = cfg.get("streaming", False) if isinstance(cfg, dict) else getattr(cfg, "streaming", False)
+        return bool(streaming) and type(self).send_delta is not BaseChannel.send_delta
 
     def is_allowed(self, sender_id: str) -> bool:
         """Check if *sender_id* is permitted.  Empty list â†’ deny all; ``"*"`` â†’ allow all."""
@@ -116,13 +139,17 @@ class BaseChannel(ABC):
             )
             return
 
+        meta = metadata or {}
+        if self.supports_streaming:
+            meta = {**meta, "_wants_stream": True}
+
         msg = InboundMessage(
             channel=self.name,
             sender_id=str(sender_id),
             chat_id=str(chat_id),
             content=content,
             media=media or [],
-            metadata=metadata or {},
+            metadata=meta,
             session_key_override=session_key,
         )
 
@@ -137,4 +164,3 @@ class BaseChannel(ABC):
     def is_running(self) -> bool:
         """Check if the channel is running."""
         return self._running
-

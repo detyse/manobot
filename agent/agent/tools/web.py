@@ -14,6 +14,7 @@ import httpx
 from loguru import logger
 
 from agent.agent.tools.base import Tool
+from agent.utils.helpers import build_image_content_blocks
 
 if TYPE_CHECKING:
     from agent.config.schema import WebSearchConfig
