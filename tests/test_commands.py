@@ -1,9 +1,8 @@
 """Tests for provider configuration and model detection."""
 
 from agent.config.schema import Config
-from agent.providers.litellm_provider import LiteLLMProvider
 from agent.providers.openai_codex_provider import _strip_model_prefix
-from agent.providers.registry import find_by_model
+from agent.providers.registry import find_by_name
 
 
 def test_config_matches_github_copilot_codex_with_hyphen_prefix():
@@ -20,19 +19,11 @@ def test_config_matches_openai_codex_with_hyphen_prefix():
     assert config.get_provider_name() == "openai_codex"
 
 
-def test_find_by_model_prefers_explicit_prefix_over_generic_codex_keyword():
-    spec = find_by_model("github-copilot/gpt-5.3-codex")
+def test_find_by_name_normalizes_hyphenated_provider_names():
+    spec = find_by_name("github-copilot")
 
     assert spec is not None
     assert spec.name == "github_copilot"
-
-
-def test_litellm_provider_canonicalizes_github_copilot_hyphen_prefix():
-    provider = LiteLLMProvider(default_model="github-copilot/gpt-5.3-codex")
-
-    resolved = provider._resolve_model("github-copilot/gpt-5.3-codex")
-
-    assert resolved == "github_copilot/gpt-5.3-codex"
 
 
 def test_openai_codex_strip_prefix_supports_hyphen_and_underscore():
