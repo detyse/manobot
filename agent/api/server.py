@@ -96,7 +96,7 @@ async def handle_chat_completions(request: web.Request) -> web.Response:
     session_locks: dict[str, asyncio.Lock] = request.app["session_locks"]
     session_lock = session_locks.setdefault(session_key, asyncio.Lock())
 
-    logger.info("API request session_key={} content={}", session_key, user_content[:80])
+    logger.info("[API] Request: session_key={}, content_len={}, content={}", session_key, len(user_content), user_content[:80])
 
     _FALLBACK = "I've completed processing but have no response to give."
 
@@ -142,9 +142,10 @@ async def handle_chat_completions(request: web.Request) -> web.Response:
                 logger.exception("Error processing request for session {}", session_key)
                 return _error_json(500, "Internal server error", err_type="server_error")
     except Exception:
-        logger.exception("Unexpected API lock error for session {}", session_key)
+        logger.exception("[API] Unexpected lock error for session {}", session_key)
         return _error_json(500, "Internal server error", err_type="server_error")
 
+    logger.info("[API] Response: session_key={}, response_len={}", session_key, len(response_text))
     return web.json_response(_chat_completion_response(response_text, model_name))
 
 

@@ -1,4 +1,4 @@
-﻿"""Base LLM provider interface."""
+"""Base LLM provider interface."""
 
 import asyncio
 import json
@@ -282,6 +282,9 @@ class LLMProvider(ABC):
         if reasoning_effort is self._SENTINEL:
             reasoning_effort = self.generation.reasoning_effort
 
+        logger.debug("[Provider] chat_stream_with_retry: model={}, messages={}, tools={}, max_tokens={}, temp={}",
+                     model, len(messages), len(tools) if tools else 0, max_tokens, temperature)
+
         kw: dict[str, Any] = dict(
             messages=messages, tools=tools, model=model,
             max_tokens=max_tokens, temperature=temperature,
@@ -293,6 +296,9 @@ class LLMProvider(ABC):
             response = await self._safe_chat_stream(**kw)
 
             if response.finish_reason != "error":
+                logger.debug("[Provider] chat_stream response: finish_reason={}, has_tool_calls={}, content_len={}, usage={}",
+                             response.finish_reason, response.has_tool_calls,
+                             len(response.content) if response.content else 0, response.usage)
                 return response
 
             if not self._is_transient_error(response.content):
@@ -334,6 +340,8 @@ class LLMProvider(ABC):
         if reasoning_effort is self._SENTINEL:
             reasoning_effort = self.generation.reasoning_effort
 
+        logger.debug("[Provider] chat_with_retry: model={}, messages={}, tools={}", model, len(messages), len(tools) if tools else 0)
+
         kw: dict[str, Any] = dict(
             messages=messages, tools=tools, model=model,
             max_tokens=max_tokens, temperature=temperature,
@@ -344,6 +352,9 @@ class LLMProvider(ABC):
             response = await self._safe_chat(**kw)
 
             if response.finish_reason != "error":
+                logger.debug("[Provider] chat response: finish_reason={}, has_tool_calls={}, content_len={}, usage={}",
+                             response.finish_reason, response.has_tool_calls,
+                             len(response.content) if response.content else 0, response.usage)
                 return response
 
             if not self._is_transient_error(response.content):

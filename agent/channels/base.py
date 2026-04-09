@@ -1,4 +1,4 @@
-﻿"""Base channel interface for chat platforms."""
+"""Base channel interface for chat platforms."""
 
 from __future__ import annotations
 
@@ -153,6 +153,8 @@ class BaseChannel(ABC):
             session_key_override=session_key,
         )
 
+        logger.debug("[Channel:{}] _handle_message: sender={}, chat_id={}, content_len={}, wants_stream={}",
+                      self.name, sender_id, chat_id, len(content), meta.get("_wants_stream", False))
         await self.bus.publish_inbound(msg)
 
     @classmethod

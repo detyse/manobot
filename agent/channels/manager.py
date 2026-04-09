@@ -1,4 +1,4 @@
-﻿"""Channel manager for coordinating chat channels."""
+"""Channel manager for coordinating chat channels."""
 
 from __future__ import annotations
 
@@ -141,6 +141,8 @@ class ChannelManager:
 
                 channel = self.channels.get(msg.channel)
                 if channel:
+                    logger.debug("[Channel:Manager] Dispatching to {}: chat_id={}, meta_keys={}",
+                                 msg.channel, msg.chat_id, list((msg.metadata or {}).keys()))
                     await self._send_with_retry(channel, msg)
                 else:
                     logger.warning("Unknown channel: {}", msg.channel)
@@ -154,9 +156,15 @@ class ChannelManager:
     async def _send_once(channel: BaseChannel, msg: OutboundMessage) -> None:
         """Send one outbound message without retry policy."""
         if msg.metadata.get("_stream_delta") or msg.metadata.get("_stream_end"):
+            logger.debug("[Channel:{}] _send_once: send_delta chat_id={}, content_len={}, stream_end={}",
+                         msg.channel, msg.chat_id, len(msg.content), bool(msg.metadata.get("_stream_end")))
             await channel.send_delta(msg.chat_id, msg.content, msg.metadata)
         elif not msg.metadata.get("_streamed"):
+            logger.debug("[Channel:{}] _send_once: send chat_id={}, content_len={}", msg.channel, msg.chat_id, len(msg.content) if msg.content else 0)
             await channel.send(msg)
+        else:
+            logger.debug("[Channel:{}] _send_once: SKIPPED (already streamed) chat_id={}, content_len={}",
+                         msg.channel, msg.chat_id, len(msg.content) if msg.content else 0)
 
     def _coalesce_stream_deltas(
         self,

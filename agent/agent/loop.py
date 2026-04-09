@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import os
 import time
 from contextlib import AsyncExitStack, nullcontext
@@ -16,19 +15,20 @@ from loguru import logger
 from agent.agent.context import ContextBuilder
 from agent.agent.hook import AgentHook, AgentHookContext, CompositeHook
 from agent.agent.memory import MemoryConsolidator
-from agent.agent.runner import AgentRunSpec, AgentRunner
+from agent.agent.runner import AgentRunner, AgentRunSpec
+from agent.agent.skills import BUILTIN_SKILLS_DIR
 from agent.agent.subagent import SubagentManager
 from agent.agent.tools.cron import CronTool
-from agent.agent.skills import BUILTIN_SKILLS_DIR
 from agent.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from agent.agent.tools.message import MessageTool
 from agent.agent.tools.registry import ToolRegistry
+from agent.agent.tools.search import GlobTool, GrepTool
 from agent.agent.tools.shell import ExecTool
 from agent.agent.tools.spawn import SpawnTool
 from agent.agent.tools.web import WebFetchTool, WebSearchTool
 from agent.bus.events import InboundMessage, OutboundMessage
-from agent.command import CommandContext, CommandRouter, register_builtin_commands
 from agent.bus.queue import MessageBus
+from agent.command import CommandContext, CommandRouter, register_builtin_commands
 from agent.providers.base import LLMProvider
 from agent.session.manager import Session, SessionManager
 
@@ -76,8 +76,11 @@ class _LoopHook(AgentHook):
         incremental = new_clean[len(prev_clean):]
         if incremental and self._on_stream:
             await self._on_stream(incremental)
+        elif not incremental and delta:
+            logger.debug("[Loop] on_stream: delta stripped by think filter, raw_delta_len={}, buf_len={}", len(delta), len(self._stream_buf))
 
     async def on_stream_end(self, context: AgentHookContext, *, resuming: bool) -> None:
+        logger.debug("[Loop] on_stream_end: resuming={}, buf_len={}", resuming, len(self._stream_buf))
         if self._on_stream_end:
             await self._on_stream_end(resuming=resuming)
         self._stream_buf = ""
@@ -242,7 +245,7 @@ class AgentLoop:
 
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
-        allowed_dir = self.workspace if self.restrict_to_workspace else None
+        allowed_dir = self.workspace if (self.restrict_to_workspace or self.exec_config.sandbox) else None
         extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else None
         self.tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read))
         for cls in (WriteFileTool, EditFileTool, ListDirTool):
@@ -252,10 +255,13 @@ class AgentLoop:
                 working_dir=str(self.workspace),
                 timeout=self.exec_config.timeout,
                 restrict_to_workspace=self.restrict_to_workspace,
+                sandbox=self.exec_config.sandbox,
                 path_append=self.exec_config.path_append,
             ))
         self.tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
         self.tools.register(WebFetchTool(proxy=self.web_proxy))
+        self.tools.register(GlobTool(workspace=self.workspace, allowed_dir=allowed_dir))
+        self.tools.register(GrepTool(workspace=self.workspace, allowed_dir=allowed_dir))
         self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
         self.tools.register(SpawnTool(manager=self.subagents))
         if self.cron_service:
@@ -400,6 +406,7 @@ class AgentLoop:
             try:
                 on_stream = on_stream_end = None
                 if msg.metadata.get("_wants_stream"):
+                    logger.debug("[Loop] _dispatch: streaming enabled for {}:{}", msg.channel, msg.chat_id)
                     # Split one answer into distinct stream segments.
                     stream_base_id = f"{msg.session_key}:{time.time_ns()}"
                     stream_segment = 0
@@ -434,6 +441,9 @@ class AgentLoop:
                     msg, on_stream=on_stream, on_stream_end=on_stream_end,
                 )
                 if response is not None:
+                    logger.debug("[Loop] _dispatch: publishing outbound for {}:{}, content_len={}, streamed={}",
+                                 msg.channel, msg.chat_id, len(response.content) if response.content else 0,
+                                 response.metadata.get("_streamed", False) if response.metadata else False)
                     await self.bus.publish_outbound(response)
                 elif msg.channel == "cli":
                     await self.bus.publish_outbound(OutboundMessage(
@@ -472,6 +482,14 @@ class AgentLoop:
         """Stop the agent loop."""
         self._running = False
         logger.info("Agent loop stopping")
+
+    async def _handle_stop(self, msg: InboundMessage) -> OutboundMessage | None:
+        """Backward-compatible `/stop` entry point used by older callers/tests."""
+        ctx = CommandContext(msg=msg, session=None, key=msg.session_key, raw=msg.content.strip(), loop=self)
+        result = await self.commands.dispatch_priority(ctx)
+        if result is not None:
+            await self.bus.publish_outbound(result)
+        return result
 
     async def _process_message(
         self,
@@ -560,6 +578,7 @@ class AgentLoop:
         self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
 
         if (mt := self.tools.get("message")) and isinstance(mt, MessageTool) and mt._sent_in_turn:
+            logger.debug("[Loop] _process_message: MessageTool sent in turn, returning None")
             return None
 
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
@@ -568,6 +587,7 @@ class AgentLoop:
         meta = dict(msg.metadata or {})
         if on_stream is not None:
             meta["_streamed"] = True
+            logger.debug("[Loop] _process_message: marking response as _streamed=True for {}:{}", msg.channel, msg.chat_id)
         return OutboundMessage(
             channel=msg.channel, chat_id=msg.chat_id, content=final_content,
             metadata=meta,

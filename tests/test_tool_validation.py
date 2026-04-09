@@ -1,5 +1,17 @@
+import shlex
+import subprocess
+import sys
 from typing import Any
 
+from agent.agent.tools import (
+    ArraySchema,
+    IntegerSchema,
+    ObjectSchema,
+    Schema,
+    StringSchema,
+    tool_parameters,
+    tool_parameters_schema,
+)
 from agent.agent.tools.base import Tool
 from agent.agent.tools.registry import ToolRegistry
 from agent.agent.tools.shell import ExecTool
@@ -39,6 +51,121 @@ class SampleTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         return "ok"
+
+
+@tool_parameters(
+    tool_parameters_schema(
+        query=StringSchema(min_length=2),
+        count=IntegerSchema(2, minimum=1, maximum=10),
+        required=["query", "count"],
+    )
+)
+class DecoratedSampleTool(Tool):
+    @property
+    def name(self) -> str:
+        return "decorated_sample"
+
+    @property
+    def description(self) -> str:
+        return "decorated sample tool"
+
+    async def execute(self, **kwargs: Any) -> str:
+        return f"ok:{kwargs['count']}"
+
+
+class CastTestTool(Tool):
+    def __init__(self, schema: dict[str, Any]) -> None:
+        self._schema = schema
+
+    @property
+    def name(self) -> str:
+        return "cast_test"
+
+    @property
+    def description(self) -> str:
+        return "test tool for casting"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return self._schema
+
+    async def execute(self, **kwargs: Any) -> str:
+        return "ok"
+
+
+def test_schema_validate_value_matches_tool_validate_params() -> None:
+    root = tool_parameters_schema(
+        query=StringSchema(min_length=2),
+        count=IntegerSchema(2, minimum=1, maximum=10),
+        required=["query", "count"],
+    )
+    obj = ObjectSchema(
+        query=StringSchema(min_length=2),
+        count=IntegerSchema(2, minimum=1, maximum=10),
+        required=["query", "count"],
+    )
+    params = {"query": "h", "count": 2}
+
+    class MiniTool(Tool):
+        @property
+        def name(self) -> str:
+            return "mini"
+
+        @property
+        def description(self) -> str:
+            return ""
+
+        @property
+        def parameters(self) -> dict[str, Any]:
+            return root
+
+        async def execute(self, **kwargs: Any) -> str:
+            return ""
+
+    expected = MiniTool().validate_params(params)
+    assert Schema.validate_json_schema_value(params, root, "") == expected
+    assert obj.validate_value(params, "") == expected
+    assert IntegerSchema(0, minimum=1).validate_value(0, "n") == ["n must be >= 1"]
+
+
+def test_schema_classes_equivalent_to_sample_tool_parameters() -> None:
+    built = tool_parameters_schema(
+        query=StringSchema(min_length=2),
+        count=IntegerSchema(2, minimum=1, maximum=10),
+        mode=StringSchema("", enum=["fast", "full"]),
+        meta=ObjectSchema(
+            tag=StringSchema(""),
+            flags=ArraySchema(StringSchema("")),
+            required=["tag"],
+        ),
+        required=["query", "count"],
+    )
+    assert built == SampleTool().parameters
+
+
+def test_tool_parameters_returns_fresh_copy_per_access() -> None:
+    tool = DecoratedSampleTool()
+
+    first = tool.parameters
+    second = tool.parameters
+
+    assert first == second
+    assert first is not second
+    assert first["properties"] is not second["properties"]
+
+    first["properties"]["query"]["minLength"] = 99
+    assert tool.parameters["properties"]["query"]["minLength"] == 2
+
+
+async def test_registry_executes_decorated_tool_end_to_end() -> None:
+    reg = ToolRegistry()
+    reg.register(DecoratedSampleTool())
+
+    ok = await reg.execute("decorated_sample", {"query": "hello", "count": "3"})
+    assert ok == "ok:3"
+
+    err = await reg.execute("decorated_sample", {"query": "h", "count": 3})
+    assert "Invalid parameters" in err
 
 
 def test_validate_params_missing_required() -> None:
@@ -95,6 +222,12 @@ def test_exec_extract_absolute_paths_keeps_full_windows_path() -> None:
     assert paths == [r"C:\user\workspace\txt"]
 
 
+def test_exec_extract_absolute_paths_captures_windows_drive_root_path() -> None:
+    cmd = "dir E:\\"
+    paths = ExecTool._extract_absolute_paths(cmd)
+    assert paths == ["E:\\"]
+
+
 def test_exec_extract_absolute_paths_ignores_relative_posix_segments() -> None:
     cmd = ".venv/bin/python script.py"
     paths = ExecTool._extract_absolute_paths(cmd)
@@ -106,3 +239,211 @@ def test_exec_extract_absolute_paths_captures_posix_absolute_paths() -> None:
     paths = ExecTool._extract_absolute_paths(cmd)
     assert "/tmp/data.txt" in paths
     assert "/tmp/out.txt" in paths
+
+
+def test_exec_extract_absolute_paths_captures_home_paths() -> None:
+    cmd = "cat ~/.nanobot/config.json > ~/out.txt"
+    paths = ExecTool._extract_absolute_paths(cmd)
+    assert "~/.nanobot/config.json" in paths
+    assert "~/out.txt" in paths
+
+
+def test_exec_extract_absolute_paths_captures_quoted_paths() -> None:
+    cmd = 'cat "/tmp/data.txt" "~/.nanobot/config.json"'
+    paths = ExecTool._extract_absolute_paths(cmd)
+    assert "/tmp/data.txt" in paths
+    assert "~/.nanobot/config.json" in paths
+
+
+def test_exec_guard_blocks_home_path_outside_workspace(tmp_path) -> None:
+    tool = ExecTool(restrict_to_workspace=True)
+    error = tool._guard_command("cat ~/.nanobot/config.json", str(tmp_path))
+    assert error == "Error: Command blocked by safety guard (path outside working dir)"
+
+
+def test_exec_guard_allows_media_path_outside_workspace(tmp_path, monkeypatch) -> None:
+    media_dir = tmp_path / "media"
+    media_dir.mkdir()
+    media_file = media_dir / "photo.jpg"
+    media_file.write_text("ok", encoding="utf-8")
+
+    monkeypatch.setattr("agent.agent.tools.shell.get_media_dir", lambda: media_dir)
+
+    tool = ExecTool(restrict_to_workspace=True)
+    error = tool._guard_command(f'cat "{media_file}"', str(tmp_path / "workspace"))
+    assert error is None
+
+
+def test_exec_guard_blocks_windows_drive_root_outside_workspace(monkeypatch) -> None:
+    import agent.agent.tools.shell as shell_mod
+
+    class FakeWindowsPath:
+        def __init__(self, raw: str) -> None:
+            self.raw = raw.rstrip("\\") + ("\\" if raw.endswith("\\") else "")
+
+        def resolve(self) -> "FakeWindowsPath":
+            return self
+
+        def expanduser(self) -> "FakeWindowsPath":
+            return self
+
+        def is_absolute(self) -> bool:
+            return len(self.raw) >= 3 and self.raw[1:3] == ":\\"
+
+        @property
+        def parents(self) -> list["FakeWindowsPath"]:
+            if not self.is_absolute():
+                return []
+            trimmed = self.raw.rstrip("\\")
+            if len(trimmed) <= 2:
+                return []
+            idx = trimmed.rfind("\\")
+            if idx <= 2:
+                return [FakeWindowsPath(trimmed[:2] + "\\")]
+            parent = FakeWindowsPath(trimmed[:idx])
+            return [parent, *parent.parents]
+
+        def __eq__(self, other: object) -> bool:
+            return isinstance(other, FakeWindowsPath) and self.raw.lower() == other.raw.lower()
+
+    monkeypatch.setattr(shell_mod, "Path", FakeWindowsPath)
+
+    tool = ExecTool(restrict_to_workspace=True)
+    error = tool._guard_command("dir E:\\", "E:\\workspace")
+    assert error == "Error: Command blocked by safety guard (path outside working dir)"
+
+
+def test_cast_params_string_to_int() -> None:
+    tool = CastTestTool({"type": "object", "properties": {"count": {"type": "integer"}}})
+    result = tool.cast_params({"count": "42"})
+    assert result["count"] == 42
+    assert isinstance(result["count"], int)
+
+
+def test_cast_params_string_to_number() -> None:
+    tool = CastTestTool({"type": "object", "properties": {"rate": {"type": "number"}}})
+    result = tool.cast_params({"rate": "3.14"})
+    assert result["rate"] == 3.14
+    assert isinstance(result["rate"], float)
+
+
+def test_cast_params_string_to_bool() -> None:
+    tool = CastTestTool({"type": "object", "properties": {"enabled": {"type": "boolean"}}})
+    assert tool.cast_params({"enabled": "true"})["enabled"] is True
+    assert tool.cast_params({"enabled": "false"})["enabled"] is False
+    assert tool.cast_params({"enabled": "1"})["enabled"] is True
+
+
+def test_cast_params_array_items() -> None:
+    tool = CastTestTool(
+        {
+            "type": "object",
+            "properties": {
+                "nums": {"type": "array", "items": {"type": "integer"}},
+            },
+        }
+    )
+    result = tool.cast_params({"nums": ["1", "2", "3"]})
+    assert result["nums"] == [1, 2, 3]
+
+
+def test_cast_params_nested_object() -> None:
+    tool = CastTestTool(
+        {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "type": "object",
+                    "properties": {
+                        "port": {"type": "integer"},
+                        "debug": {"type": "boolean"},
+                    },
+                },
+            },
+        }
+    )
+    result = tool.cast_params({"config": {"port": "8080", "debug": "true"}})
+    assert result["config"]["port"] == 8080
+    assert result["config"]["debug"] is True
+
+
+def test_cast_params_bool_not_cast_to_int() -> None:
+    tool = CastTestTool({"type": "object", "properties": {"count": {"type": "integer"}}})
+    result = tool.cast_params({"count": True})
+    assert result["count"] is True
+    errors = tool.validate_params(result)
+    assert any("count should be integer" in e for e in errors)
+
+
+def test_cast_params_invalid_string_to_int() -> None:
+    tool = CastTestTool({"type": "object", "properties": {"count": {"type": "integer"}}})
+    result = tool.cast_params({"count": "abc"})
+    assert result["count"] == "abc"
+
+
+def test_cast_params_invalid_string_to_number() -> None:
+    tool = CastTestTool({"type": "object", "properties": {"rate": {"type": "number"}}})
+    result = tool.cast_params({"rate": "not_a_number"})
+    assert result["rate"] == "not_a_number"
+
+
+def test_validate_params_bool_not_accepted_as_number() -> None:
+    tool = CastTestTool({"type": "object", "properties": {"rate": {"type": "number"}}})
+    errors = tool.validate_params({"rate": False})
+    assert any("rate should be number" in e for e in errors)
+
+
+def test_validate_nullable_param_accepts_none() -> None:
+    tool = CastTestTool(
+        {
+            "type": "object",
+            "properties": {"name": {"type": ["string", "null"]}},
+        }
+    )
+    errors = tool.validate_params({"name": None})
+    assert errors == []
+
+
+def test_validate_nullable_flag_accepts_none() -> None:
+    tool = CastTestTool(
+        {
+            "type": "object",
+            "properties": {"name": {"type": "string", "nullable": True}},
+        }
+    )
+    errors = tool.validate_params({"name": None})
+    assert errors == []
+
+
+def test_cast_nullable_param_no_crash() -> None:
+    tool = CastTestTool(
+        {
+            "type": "object",
+            "properties": {"name": {"type": ["string", "null"]}},
+        }
+    )
+    result = tool.cast_params({"name": "hello"})
+    assert result["name"] == "hello"
+    result = tool.cast_params({"name": None})
+    assert result["name"] is None
+
+
+async def test_exec_always_returns_exit_code() -> None:
+    tool = ExecTool()
+    result = await tool.execute(command="echo hello")
+    assert "Exit code: 0" in result
+    assert "hello" in result
+
+
+async def test_exec_head_tail_truncation() -> None:
+    tool = ExecTool()
+    script = "print('A' * 6000 + '\\n' + 'B' * 6000)"
+    if sys.platform == "win32":
+        command = subprocess.list2cmdline([sys.executable, "-c", script])
+    else:
+        command = f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}"
+    result = await tool.execute(command=command)
+    assert "chars truncated" in result
+    assert result.startswith("A")
+    assert "Exit code:" in result
+

@@ -1,7 +1,7 @@
 """Configuration schema using Pydantic."""
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -361,6 +361,7 @@ class WebSearchConfig(Base):
     api_key: str = ""
     base_url: str = ""  # SearXNG base URL
     max_results: int = 5
+    timeout: int = 30  # Wall-clock timeout (seconds) for search operations
 
 
 class WebToolsConfig(Base):
@@ -376,6 +377,7 @@ class ExecToolConfig(Base):
     enable: bool = True
     timeout: int = 60
     path_append: str = ""
+    sandbox: str = ""  # sandbox backend: "" (none) or "bwrap"
 
 
 class MCPServerConfig(Base):
@@ -402,6 +404,17 @@ class ToolsConfig(Base):
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
 
+class LoggingConfig(Base):
+    """Logging configuration."""
+
+    level: str = "INFO"  # DEBUG, INFO, WARNING, ERROR
+    format: str = "text"  # text, json
+    file: str | None = None  # Log file path; None = console only
+    max_size_mb: int = 10
+    retention_days: int = 7
+    modules: dict[str, str] = Field(default_factory=dict)  # Per-module overrides, e.g. {"channel": "DEBUG"}
+
+
 class Config(BaseSettings):
     """Root configuration for nanobot."""
 
@@ -411,6 +424,7 @@ class Config(BaseSettings):
     api: ApiConfig = Field(default_factory=ApiConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
     @property
     def workspace_path(self) -> Path:

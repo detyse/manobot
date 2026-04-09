@@ -374,11 +374,18 @@ def main():
     parser.add_argument("--agent-id", required=True, help="Agent identifier")
     parser.add_argument("--port", type=int, required=True, help="HTTP API port")
     parser.add_argument("--config", required=True, help="Path to agent config.json")
-    parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
     args = parser.parse_args()
 
-    if not args.verbose:
-        logger.disable("agent")
+    # Setup logging from config (replaces the old logger.disable approach)
+    from agent.config.loader import load_config as _load_cfg
+    from agent.utils.logging_config import setup_logging
+    try:
+        cfg = _load_cfg(Path(args.config))
+        setup_logging(cfg.logging, verbose=args.verbose)
+    except Exception:
+        # Fallback: basic logging if config load fails
+        setup_logging(verbose=args.verbose)
 
     asyncio.run(_run(args.agent_id, args.port, Path(args.config)))
 

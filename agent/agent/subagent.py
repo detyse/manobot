@@ -1,23 +1,28 @@
 """Subagent manager for background task execution."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
 from agent.agent.skills import BUILTIN_SKILLS_DIR
 from agent.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from agent.agent.tools.registry import ToolRegistry
+from agent.agent.tools.search import GlobTool, GrepTool
 from agent.agent.tools.shell import ExecTool
 from agent.agent.tools.web import WebFetchTool, WebSearchTool
 from agent.bus.events import InboundMessage
 from agent.bus.queue import MessageBus
-from agent.config.schema import ExecToolConfig
 from agent.providers.base import LLMProvider
 from agent.utils.helpers import build_assistant_message
+
+if TYPE_CHECKING:
+    from agent.config.schema import ExecToolConfig, WebSearchConfig
 
 
 class SubagentManager:
@@ -29,9 +34,9 @@ class SubagentManager:
         workspace: Path,
         bus: MessageBus,
         model: str | None = None,
-        web_search_config: "WebSearchConfig | None" = None,
+        web_search_config: WebSearchConfig | None = None,
         web_proxy: str | None = None,
-        exec_config: "ExecToolConfig | None" = None,
+        exec_config: ExecToolConfig | None = None,
         restrict_to_workspace: bool = False,
     ):
         from agent.config.schema import ExecToolConfig, WebSearchConfig
@@ -92,7 +97,7 @@ class SubagentManager:
         try:
             # Build subagent tools (no message tool, no spawn tool)
             tools = ToolRegistry()
-            allowed_dir = self.workspace if self.restrict_to_workspace else None
+            allowed_dir = self.workspace if (self.restrict_to_workspace or self.exec_config.sandbox) else None
             extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else None
             tools.register(
                 ReadFileTool(
@@ -108,11 +113,14 @@ class SubagentManager:
                 working_dir=str(self.workspace),
                 timeout=self.exec_config.timeout,
                 restrict_to_workspace=self.restrict_to_workspace,
+                sandbox=self.exec_config.sandbox,
                 path_append=self.exec_config.path_append,
             ))
             tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
             tools.register(WebFetchTool(proxy=self.web_proxy))
-            
+            tools.register(GlobTool(workspace=self.workspace, allowed_dir=allowed_dir))
+            tools.register(GrepTool(workspace=self.workspace, allowed_dir=allowed_dir))
+
             system_prompt = self._build_subagent_prompt()
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},
@@ -202,7 +210,7 @@ Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not men
 
         await self.bus.publish_inbound(msg)
         logger.debug("Subagent [{}] announced result to {}:{}", task_id, origin['channel'], origin['chat_id'])
-    
+
     def _build_subagent_prompt(self) -> str:
         """Build a focused system prompt for the subagent."""
         from agent.agent.context import ContextBuilder
