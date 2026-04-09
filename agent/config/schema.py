@@ -1,7 +1,7 @@
 """Configuration schema using Pydantic."""
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -361,6 +361,7 @@ class WebSearchConfig(Base):
     api_key: str = ""
     base_url: str = ""  # SearXNG base URL
     max_results: int = 5
+    timeout: int = 30  # Wall-clock timeout (seconds) for search operations
 
 
 class WebToolsConfig(Base):
@@ -376,6 +377,7 @@ class ExecToolConfig(Base):
     enable: bool = True
     timeout: int = 60
     path_append: str = ""
+    sandbox: str = ""  # sandbox backend: "" (none) or "bwrap"
 
 
 class MCPServerConfig(Base):
