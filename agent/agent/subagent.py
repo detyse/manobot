@@ -11,6 +11,7 @@ from loguru import logger
 from agent.agent.skills import BUILTIN_SKILLS_DIR
 from agent.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from agent.agent.tools.registry import ToolRegistry
+from agent.agent.tools.search import GlobTool, GrepTool
 from agent.agent.tools.shell import ExecTool
 from agent.agent.tools.web import WebFetchTool, WebSearchTool
 from agent.bus.events import InboundMessage
@@ -112,6 +113,8 @@ class SubagentManager:
             ))
             tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
             tools.register(WebFetchTool(proxy=self.web_proxy))
+            tools.register(GlobTool(workspace=self.workspace, allowed_dir=allowed_dir))
+            tools.register(GrepTool(workspace=self.workspace, allowed_dir=allowed_dir))
             
             system_prompt = self._build_subagent_prompt()
             messages: list[dict[str, Any]] = [

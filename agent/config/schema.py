@@ -402,6 +402,17 @@ class ToolsConfig(Base):
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
 
+class LoggingConfig(Base):
+    """Logging configuration."""
+
+    level: str = "INFO"  # DEBUG, INFO, WARNING, ERROR
+    format: str = "text"  # text, json
+    file: str | None = None  # Log file path; None = console only
+    max_size_mb: int = 10
+    retention_days: int = 7
+    modules: dict[str, str] = Field(default_factory=dict)  # Per-module overrides, e.g. {"channel": "DEBUG"}
+
+
 class Config(BaseSettings):
     """Root configuration for nanobot."""
 
@@ -411,6 +422,7 @@ class Config(BaseSettings):
     api: ApiConfig = Field(default_factory=ApiConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
     @property
     def workspace_path(self) -> Path:
